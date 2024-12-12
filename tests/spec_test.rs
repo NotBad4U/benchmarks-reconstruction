@@ -1,4 +1,6 @@
 use std::panic::AssertUnwindSafe;
+use std::process::Command;
+use std::process::ExitStatus;
 
 use file_test_runner::collect_and_run_tests;
 use file_test_runner::collection::CollectedTest;
@@ -12,7 +14,7 @@ fn main() {
     CollectOptions {
       base: "tests/benchs".into(),
       strategy: Box::new(TestPerFileCollectionStrategy {
-       file_pattern: None
+       file_pattern: Some("^.*\\.alethe$".to_owned())
       }),
       filter_override: None,
     },
@@ -24,9 +26,16 @@ fn main() {
       // * do something like this
       // * or do some checks yourself and return a value like TestResult::Passed
       // * or use `TestResult::from_maybe_panic_or_result` to combine both of the above
-      TestResult::from_maybe_panic(AssertUnwindSafe(|| {
-       run_test(test);
-      }))
+      // TestResult::from_maybe_panic(AssertUnwindSafe(|| {
+        
+      // }))
+      let status =  run_test(test);
+
+      if status.code().unwrap() == 0 {
+        TestResult::Passed
+      } else {
+        TestResult::Failed { output: vec![] }
+      }
     }
   )
 }
@@ -34,19 +43,23 @@ fn main() {
 // The `test` object only contains the test name and
 // the path to the file on the file system which you can
 // then use to determine how to run your test
-fn run_test(test: &CollectedTest) {
+fn run_test(test: &CollectedTest) -> ExitStatus {
   // Properties:
   // * `test.name` - Fully resolved name of the test.
   // * `test.path` - Path to the test file this test is associated with.
   // * `test.data` - Data associated with the test that may have been set
-  //                 by the collection strategy.
 
-  // helper function to get the text
-  //let file_text = test.read_to_string().unwrap();
   let file_name = &test.name;
-  let file_path = &test.path;
-  println!("{} {}", file_name, file_path.to_str().unwrap());
+  let alethe_file = test.path.clone();
+  let problem_file = test.path.with_extension("smt2");
 
-  // now you may do whatever with the file text and
-  // assert it using assert_eq! or whatever
+  let status = Command::new("carcara")
+    .arg("check")
+    .args(["--log", "off"])
+    .arg("-i")
+    .arg(alethe_file)
+    .arg(problem_file)
+    .status()
+    .expect(format!("failed running carcara check on {}", file_name).as_str());
+  status 
 }
