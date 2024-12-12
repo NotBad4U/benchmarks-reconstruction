@@ -1,0 +1,13 @@
+[package]
+name = "benchmarks"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+file_test_runner = "0.7.4"
+test-generator = "0.3.1"
+
+[[test]]
+name = "specs"
+path = "tests/spec_test.rs"
+harness = false
