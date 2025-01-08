@@ -41,7 +41,9 @@ fn main() {
         },
         RunOptions { parallel: true },
         |test| {
-            if count_lines(&test.path) < 300 {
+            let nb_lines = count_lines(&test.path);
+            if nb_lines < 3000 {
+                //TestResult::Ignored
                 let res = run_test(test);
 
                 if let Ok(code) = res {
@@ -54,10 +56,60 @@ fn main() {
                     TestResult::Failed { output: vec![] }
                 }
             } else {
-                TestResult::Ignored
+              let res = run_parallel_test(test, nb_lines);
+                if let Ok(code) = res {
+                  if code.code().unwrap() == 0 {
+                      TestResult::Passed
+                  } else {
+                      TestResult::Failed { output: vec![] }
+                  }
+              } else {
+                  TestResult::Failed { output: vec![] }
+              }
             }
         },
-    )
+    );
+
+
+
+    // collect_and_run_tests(
+    //     CollectOptions {
+    //         base: "tests/benchs".into(),
+    //         strategy: Box::new(TestPerFileCollectionStrategy {
+    //             file_pattern: Some("^.*\\.alethe$".to_owned()),
+    //         }),
+    //         filter_override: None,
+    //     },
+    //     RunOptions { parallel: true },
+    //     |test| {
+    //         let nb_lines = count_lines(&test.path);
+    //         if nb_lines < 3000 {
+    //             //TestResult::Ignored
+    //             let res = run_test(test);
+
+    //             if let Ok(code) = res {
+    //                 if code.code().unwrap() == 0 {
+    //                     TestResult::Passed
+    //                 } else {
+    //                     TestResult::Failed { output: vec![] }
+    //                 }
+    //             } else {
+    //                 TestResult::Failed { output: vec![] }
+    //             }
+    //         } else {
+    //           let res = run_parallel_test(test, nb_lines);
+    //             if let Ok(code) = res {
+    //               if code.code().unwrap() == 0 {
+    //                   TestResult::Passed
+    //               } else {
+    //                   TestResult::Failed { output: vec![] }
+    //               }
+    //           } else {
+    //               TestResult::Failed { output: vec![] }
+    //           }
+    //         }
+    //     },
+    // )
 }
 
 fn run_test(test: &CollectedTest) -> Result<ExitStatus, ErrorBench> {
@@ -78,7 +130,7 @@ fn run_test(test: &CollectedTest) -> Result<ExitStatus, ErrorBench> {
         .arg(alethe_file)
         .arg(problem_file)
         .stdout(Stdio::from(file))
-        .stderr(Stdio::null())
+        //.stderr(Stdio::null())
         .status()
         .map_err(|e| ErrorBench::IoErr(e))?;
 
@@ -88,14 +140,52 @@ fn run_test(test: &CollectedTest) -> Result<ExitStatus, ErrorBench> {
     }
 
     let status = Command::new("lambdapi")
-        .args(["check", "-v0", "-w", "--timeout=10"])
+        .args(["check", "-v0", "-w", "--record-time", "--timeout=20"])
         .arg(lp_file_path.clone())
         .status()
         .map_err(|e| ErrorBench::IoErr(e))?;
-
-    //std::fs::remove_file(lp_file_path).unwrap();
-
+    std::fs::remove_file(lp_file_path).unwrap();
     Ok(status)
+}
+
+fn run_parallel_test(test: &CollectedTest, nb_lines: usize) -> Result<ExitStatus, ErrorBench> {
+  let alethe_file = test.path.clone();
+  let problem_file = test.path.with_extension("smt2");
+
+//   let tmp_dir = tempfile::tempdir().map_err(|e| ErrorBench::IoErr(e))?;
+
+//   let tmpdir_path = tmp_dir.path();
+
+  std::fs::create_dir("foo").map_err(|e| ErrorBench::IoErr(e))?;
+  let tmpdir_path = PathBuf::from("foo");
+
+  let status = Command::new("carcara")
+      .arg("translate")
+      .args(["--log", "off"])
+      .arg("--expand-let-bindings")
+      .arg("-i")
+      .arg("-n")
+      .arg("1000")
+      .arg("-o")
+      .arg(tmpdir_path.clone())
+      .arg(alethe_file)
+      .arg(problem_file)
+      .stdout(Stdio::null())
+      //.stderr(Stdio::null())
+      .status()
+      .map_err(|e| ErrorBench::IoErr(e))?;
+
+    if status.code().unwrap() != 0 {
+        return Err(ErrorBench::CarcaraError);
+    }
+
+  let status = Command::new("time make")
+      .current_dir(tmpdir_path)
+      .args(["-j", "8"])
+      .status()
+      .map_err(|e| ErrorBench::IoErr(e))?;
+
+  Ok(status)
 }
 
 fn count_lines(path: &PathBuf) -> usize {
