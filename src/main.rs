@@ -2,9 +2,9 @@ extern crate tempdir;
 
 use clap::Parser;
 use fs_extra::dir::*;
-use log::{info, trace, warn};
+use log::{error, info, trace};
 use std::fs::{remove_file, File};
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader};
 use std::process::Stdio;
 use std::{
     env, fs,
@@ -14,6 +14,8 @@ use std::{
 };
 
 use jwalk::WalkDir;
+use regex::Regex;
+use rev_buf_reader::RevBufReader;
 
 use tempdir::TempDir;
 
@@ -29,7 +31,7 @@ const TRANSLATED_DIR: &'static str = "translated";
 
 const RESULT_DIR: &'static str = "results";
 
-const OUTPUT_DIR: &'static str = "output";
+//const OUTPUT_DIR: &'static str = "output";
 
 use thiserror::Error;
 
@@ -40,9 +42,9 @@ enum ErrorBench {
     #[error("IO erro")]
     FsEXtra(fs_extra::error::Error),
     #[error("Lambdapi check failed")]
-    LambdapiError,
+    LambdapiError(String),
     #[error("Carcara failed to translate")]
-    CarcaraError,
+    CarcaraError(String),
     #[error("Setup")]
     Setup(String),
 }
@@ -129,13 +131,23 @@ fn main() -> Result<(), ErrorBench> {
     let elab_dir = run_dir.path().join(ELAB_DIR);
     std::fs::create_dir(elab_dir.as_path())?;
 
-    let translated_dir = run_dir.path().join(TRANSLATED_DIR);
+    let lp_dir = run_dir.path().join(TRANSLATED_DIR);
 
     replicate_dir_hierarchy(bench_dir.as_path(), elab_dir.as_path())?;
 
-    replicate_dir_hierarchy(bench_dir.as_path(), translated_dir.as_path())?;
+    replicate_dir_hierarchy(bench_dir.as_path(), lp_dir.as_path())?;
 
     generate_alethe_proofs(&bench_dir, &proof_dir, &elab_dir)?;
+
+    generate_lambdapi(&bench_dir, &elab_dir, &lp_dir)?;
+
+    let result_dir = run_dir.path().join(RESULT_DIR);
+    std::fs::create_dir(result_dir.as_path())?;
+    replicate_dir_hierarchy(bench_dir.as_path(), result_dir.as_path())?;
+
+    //std::thread::sleep(std::time::Duration::from_millis(10000));
+
+    check_proof(&lp_dir, &result_dir)?;
 
     if let Some(dir) = args.savedir {
         let options = CopyOptions::new();
@@ -144,8 +156,9 @@ fn main() -> Result<(), ErrorBench> {
             run_dir.path().to_string_lossy(),
             dir.to_string_lossy()
         );
-        fs_extra::copy_items(&[run_dir.into_path()], dir, &options)
-            .expect("Cannot copy the result");
+        // fs_extra::copy_items(&[&run_dir.into_path()], dir, &options)
+        //     .expect("Cannot copy the result");
+        fs_extra::dir::move_dir(run_dir.into_path(), dir, &options)?;
     }
 
     Ok(())
@@ -219,10 +232,10 @@ fn generate_alethe_proofs(
     proof_dir: &Path,
     elab_dir: &Path,
 ) -> Result<(), ErrorBench> {
-    info!("Generating elaborated alethe proof...");
+    info!("Generating elaborated alethe proofs...");
 
     for entry in WalkDir::new(proof_dir) {
-        let entry = entry.map_err(|e| ErrorBench::Setup(format!("{}", e)))?;
+        let entry = entry.map_err(|e| ErrorBench::CarcaraError(format!("{}", e)))?;
 
         if entry.metadata().unwrap().is_file() {
             let alethe_file_path: PathBuf = entry.path();
@@ -235,16 +248,111 @@ fn generate_alethe_proofs(
 
             let elab_proof = File::create_new(&elab_proof_path)?;
 
-            let _ = std::process::Command::new("carcara")
+            let status = std::process::Command::new("carcara")
+                .arg("check")
+                .arg("-i")
+                .args(["--log", "off"])
+                .arg("--expand-let-bindings")
+                .arg(&alethe_file_path)
+                .arg(&problem_file_path)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()?;
+
+            if status.success() == false {
+                error!(
+                    "carcara check failed for {}",
+                    entry_prefix.to_string_lossy()
+                );
+                remove_file(&elab_proof_path)?;
+            }
+
+            let status = std::process::Command::new("carcara")
                 .arg("elaborate")
                 .arg("-i")
                 .args(["--log", "off"])
                 .arg("--expand-let-bindings")
-                .arg(alethe_file_path)
+                .arg(&alethe_file_path)
                 .arg(problem_file_path)
                 .arg("--no-print-with-sharing")
                 .stdout(Stdio::from(elab_proof))
+                .stderr(Stdio::null())
                 .status()?;
+
+            if status.success() == false {
+                error!(
+                    "The proof {} can not be elaborated",
+                    entry_prefix.to_string_lossy()
+                );
+                remove_file(elab_proof_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn generate_lambdapi(bench_dir: &Path, elab_dir: &Path, lp_dir: &Path) -> Result<(), ErrorBench> {
+    info!("Generating lambdapi proofs...");
+
+    for entry in WalkDir::new(elab_dir) {
+        let entry = entry.map_err(|e| ErrorBench::CarcaraError(format!("{}", e)))?;
+
+        if entry.metadata().unwrap().is_file() {
+            let alethe_file_path: PathBuf = entry.path();
+
+            let entry_prefix = alethe_file_path.strip_prefix(elab_dir).unwrap();
+
+            let lp_proof_path = lp_dir.join(entry_prefix).with_extension("lp");
+
+            let problem_file_path: PathBuf = bench_dir.join(entry_prefix).with_extension("smt2");
+
+            let elab_proof = File::create_new(&lp_proof_path)?;
+
+            let status = std::process::Command::new("carcara")
+                .arg("translate")
+                .arg("-i")
+                .arg("--why3")
+                .arg("--no-elab")
+                .arg(alethe_file_path)
+                .arg(problem_file_path)
+                .stdout(Stdio::from(elab_proof))
+                .stderr(Stdio::null())
+                .status()?;
+
+            if status.success() == false {
+                remove_file(&lp_proof_path)?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn check_proof(lp_dir: &Path, result_dir: &Path) -> Result<(), ErrorBench> {
+    info!("Checking lambdapi proofs...");
+
+    for entry in WalkDir::new(lp_dir) {
+        let entry = entry.map_err(|e| ErrorBench::LambdapiError(format!("{}", e)))?;
+
+        if entry.metadata().unwrap().is_file() {
+            let proof_file_path: PathBuf = entry.path();
+            let entry_prefix = proof_file_path.strip_prefix(lp_dir).unwrap();
+
+            let output_stats = result_dir.join(entry_prefix).with_extension("json");
+
+            std::process::Command::new("hyperfine")
+                .arg("--ignore-failure")
+                //.arg("--show-output") //NOTE: remove this comment to debug
+                .args(["--warmup", "3"])
+                .args(["--max-runs", "10"])
+                .args(["--export-json", &output_stats.to_string_lossy()])
+                .arg(format!(
+                    "lambdapi check --timeout=3 --map-dir={}:{} {}",
+                    "proof",
+                    lp_dir.to_string_lossy(),
+                    proof_file_path.to_string_lossy()
+                ))
+                .status()
+                .map_err(|e| ErrorBench::LambdapiError(format!("HA {}", e)))?;
         }
     }
     Ok(())
@@ -271,6 +379,13 @@ fn check_setup(bench_dir: &PathBuf) -> Result<(), ErrorBench> {
         .spawn()?;
     info!("Lambdapi found");
 
+    std::process::Command::new("hyperfine")
+        .arg("--help")
+        .stdout(Stdio::null())
+        .spawn()
+        .map_err(|_| ErrorBench::Setup("hyperfine not found, please check https://github.com/sharkdp/hyperfine/blob/master/README.md#installation to install it".to_string()))?;
+    info!("Hyperfine found");
+
     if std::path::Path::new(&bench_dir).exists() {
         info!("Benchmarks directory {} found", bench_dir.to_string_lossy());
     } else {
@@ -281,4 +396,23 @@ fn check_setup(bench_dir: &PathBuf) -> Result<(), ErrorBench> {
     }
 
     Ok(())
+}
+
+fn _nb_of_step(path: &PathBuf) -> usize {
+    let buf = RevBufReader::new(std::fs::File::open(path).unwrap());
+    let mut lines = buf.lines();
+    lines.next();
+
+    let last = lines.next().unwrap().unwrap();
+
+    let re = Regex::new(r"t(\d+)").unwrap();
+
+    let num = re
+        .captures(last.as_str())
+        .map(|cap| {
+            cap.get(1)
+                .map_or(0, |m| m.as_str().parse::<usize>().unwrap())
+        })
+        .unwrap();
+    num
 }

@@ -152,10 +152,6 @@ fn run_parallel_test(test: &CollectedTest, nb_lines: usize) -> Result<ExitStatus
   let alethe_file = test.path.clone();
   let problem_file = test.path.with_extension("smt2");
 
-//   let tmp_dir = tempfile::tempdir().map_err(|e| ErrorBench::IoErr(e))?;
-
-//   let tmpdir_path = tmp_dir.path();
-
   std::fs::create_dir("foo").map_err(|e| ErrorBench::IoErr(e))?;
   let tmpdir_path = PathBuf::from("foo");
 
