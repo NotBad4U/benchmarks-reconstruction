@@ -1,8 +1,4 @@
 **/*.alethe
 **/*.txt
-
-# Added by cargo
-
-/target
-tmp/*.lp
-/foo
+run
+proofs
