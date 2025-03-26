@@ -129,53 +129,53 @@ OPTIONS
 EOF
 }
 
-list_colors(){
-  local T='gYw'
+# list_colors(){
+#   local T='gYw'
 
-  echo -e "\n                 40m     41m     42m     43m     44m     45m     46m     47m";
+#   echo -e "\n                 40m     41m     42m     43m     44m     45m     46m     47m";
 
-  for FGs in '   0m' '   1m' '  30m' '1;30m' '  31m' '1;31m' \
-    '  32m' '1;32m' '  33m' '1;33m' '  34m' '1;34m' \
-    '  35m' '1;35m' '  36m' '1;36m' '  37m' '1;37m';
-  do
-    FG=${FGs// /}
-    echo -en " $FGs \033[$FG  $T  "
+#   for FGs in '   0m' '   1m' '  30m' '1;30m' '  31m' '1;31m' \
+#     '  32m' '1;32m' '  33m' '1;33m' '  34m' '1;34m' \
+#     '  35m' '1;35m' '  36m' '1;36m' '  37m' '1;37m';
+#   do
+#     FG=${FGs// /}
+#     echo -en " $FGs \033[$FG  $T  "
 
-    for BG in 40m 41m 42m 43m 44m 45m 46m 47m; do
-      echo -en " \033[$FG\033[$BG  $T  \033[0m";
-    done
+#     for BG in 40m 41m 42m 43m 44m 45m 46m 47m; do
+#       echo -en " \033[$FG\033[$BG  $T  \033[0m";
+#     done
 
-    echo;
-  done
+#     echo;
+#   done
 
-  echo;
-  echo "For what maps the rows and columns to this script you just need to examine $COLOR_SCRIPT"
-}
+#   echo;
+#   echo "For what maps the rows and columns to this script you just need to examine $COLOR_SCRIPT"
+# }
 
-show_version(){
-  echo $COLOR_VERSION
-}
+# show_version(){
+#   echo $COLOR_VERSION
+# }
 
-OPTIND=1
-while getopts "hcv" opt; do
-  case "$opt" in
-    h)
-      show_help
-      exit 0
-      ;;
-    c)
-      list_colors
-      exit 0
-      ;;
-    v)
-      show_version
-      exit 0
-      ;;
-    '?')
-      show_help >&2
-      exit 1
-      ;;
-  esac
-done
+# OPTIND=1
+# while getopts "hcv" opt; do
+#   case "$opt" in
+#     h)
+#       show_help
+#       exit 0
+#       ;;
+#     c)
+#       list_colors
+#       exit 0
+#       ;;
+#     v)
+#       show_version
+#       exit 0
+#       ;;
+#     '?')
+#       show_help >&2
+#       exit 1
+#       ;;
+#   esac
+# done
 
-shift "$((OPTIND-1))" # Shift off the options and optional --.
+# shift "$((OPTIND-1))" # Shift off the options and optional --.
