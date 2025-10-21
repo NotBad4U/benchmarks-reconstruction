@@ -1,0 +1,1 @@
+not (((always h043e5) & (always (h8828a -> (hf1ce5 & h7b303))) & (always (((hf1ce5 & h7b303) & (hfc35e | h18388)) -> (next (hf1ce5 & h7b303)))) & (always ((hf1ce5 & h7b303) -> ha9f64)) & (always (cc | ~ cc)) -> ((h8828a & (always (hfc35e | h18388))) -> (always ha9f64))))

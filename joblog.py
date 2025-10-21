@@ -1,0 +1,141 @@
+#!./python
+
+# IMPORTS
+import argparse
+import os
+
+from dateutil.relativedelta import relativedelta
+
+# CONSTANTS
+HEADINGS = ('JobRuntime', 'Exitval', 'Signal', 'Command')
+
+# FUNCTIONS
+mean = lambda x: float(sum(x)) / float(len(x))
+
+# http://stackoverflow.com/questions/6574329/how-can-i-produce-a-human-readable-difference-when-subtracting-two-unix-timestam
+attrs = ['years', 'months', 'days', 'hours', 'minutes', 'seconds']
+human_readable = lambda delta: [
+    '%d %s' % (getattr(delta, attr), attr if getattr(delta, attr) != 1 else attr[:-1])
+    for attr in attrs if getattr(delta, attr)
+]
+
+# MAIN
+if __name__ == '__main__':
+
+    # GET LOG FILENAME
+    parser = argparse.ArgumentParser(description='Joblog Parser')
+    parser.add_argument('joblog', type=str, help='Path to the joblog file to be analysed.')
+    parser.add_argument('-s', '--save-failed', action='store_true', help='Write out files with commands that terminated with non-zero exit codes.')
+
+    args = parser.parse_args()
+    joblog_noext = os.path.splitext(args.joblog)[0]
+
+    # READ IN THE JOB LOG DATA
+    num_jobs = 0
+    failed_jobs = {}
+    with open(args.joblog, 'r', encoding='utf-8') as fo:
+
+        header_index = {}
+        data = {x: [] for x in HEADINGS}
+
+        for e, line in enumerate(fo):
+            line = line.strip().split('\t')
+
+            if not line:
+                continue
+
+            # HEADER
+            if e == 0:
+                header_index = {x: k for k, x in enumerate(line)}
+                continue
+
+            # CONTENT
+            for heading in HEADINGS:
+                data[heading].append(line[header_index[heading]])
+
+            # FAILED JOBS
+            value = int(line[header_index['Exitval']])
+            if value != 0:
+                if value not in failed_jobs:
+                    failed_jobs[value] = [line[header_index['Command']]]
+                else:
+                    failed_jobs[value].append(line[header_index['Command']])
+
+            num_jobs += 1
+
+
+    # COUNT EXIT VALUES
+    exit_vals = {}
+
+    for value in data['Exitval']:
+        value = int(value)
+        if value not in exit_vals:
+            exit_vals[value] = 1
+        else:
+            exit_vals[value] += 1
+
+    # OUTPUTS
+    print()
+    print('Joblog File: {}'.format(args.joblog))
+    print()
+
+    print('Total Jobs: {}'.format(num_jobs))
+    print()
+
+    runtimes = [float(x) for x in data['JobRuntime']]
+
+    print('Minimum Runtime')
+    print(', '.join(human_readable(relativedelta(seconds=min(runtimes)))))
+    print()
+
+    print('Maximum Runtime')
+    print(', '.join(human_readable(relativedelta(seconds=max(runtimes)))))
+    print()
+
+    print('Average Runtime')
+    print(', '.join(human_readable(relativedelta(seconds=mean(runtimes)))))
+    print()
+
+    # Cumulative Effective Runtime refers to the total CPU time spent across all jobs, as opposed to wall-clock time (how long the entire batch took to complete).
+    print('Cumulative Effective Runtime')
+    print(', '.join(human_readable(relativedelta(seconds=sum(runtimes)))))
+    print()
+
+    # EXITVAL SUMMARY
+    print('Exit Values')
+
+    exit_value_counts = {}
+    for exit_val, count in sorted(exit_vals.items(), key=lambda x: x[0]):
+        print('Exit {}: {} occurances'.format(exit_val, count))
+        exit_value_counts[exit_val] = count
+
+    print()
+
+    # ADD PROPORTION OF SUCCESSFUL JOBS
+    if 0 in exit_value_counts:
+        success_ratio = float(exit_value_counts[0]) / float(sum(exit_value_counts.values()))
+    else:
+        success_ratio = 0.0
+
+    print('{:.2f}% successful.'.format(success_ratio * 100))
+    print()
+
+    # OPTIONALLY WRITE OUT LISTS OF JOBS THAT FAILED
+    if args.save_failed:
+        print('Saving failed jobs:')
+
+        outfile_all = joblog_noext + '_all_failed.txt'
+
+        with open(outfile_all, 'w', encoding='utf-8') as all_fo:
+            for exit_val, commands in sorted(failed_jobs.items(), key=lambda x: x[0]):
+                outfile = joblog_noext + '_exit{}.txt'.format(exit_val)
+
+                with open(outfile, 'w', encoding='utf-8') as fo:
+                    fo.write('\n'.join(str(x) for x in commands))
+
+                print('Wrote {}'.format(outfile))
+
+                all_fo.write('\n'.join(str(x) for x in commands) + '\n')
+
+        print('Wrote {}'.format(outfile_all))
+        print()
