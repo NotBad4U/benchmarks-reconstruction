@@ -29,7 +29,7 @@ pushd "${BENCH_DIR}" > /dev/null
 fd . -t d -X mkdir -p $OUTPUT_DIR/proofs/{} \;
 
 fd -tf -e 'smt2' -j 8 | \
-  parallel --joblog "${JOBLOGS}/cvc5.txt" --timeout 30s --will-cite --bar -j8 \
+  parallel --joblog "${JOBLOGS}/cvc5.txt" --timeout "${CVC5_TIMEOUT:-30}" --will-cite --bar -j8 \
   'cvc5 --dag-thresh=0 --produce-proofs --dump-proofs  --proof-format-mode=alethe --proof-granularity=dsl-rewrite --proof-alethe-res-pivots --proof-elim-subtypes --print-arith-lit-token ./{} > '"$OUTPUT_DIR"'/proofs/{.}.proof' \;
 
 popd > /dev/null

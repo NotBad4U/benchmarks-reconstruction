@@ -34,7 +34,7 @@ export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS TEST_NAME
 pushd "${RUNDIR}/alethe" > /dev/null
 
   fd -tf -e 'elab' -j 8 ${TEST_NAME} | \
-    parallel --joblog "${JOBLOGS}/translate_logs.txt" --timeout 10s --will-cite --bar -j8 \
+    parallel --joblog "${JOBLOGS}/translate_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j8 \
     'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" 1> "../convert/{.}.lp" 2> /dev/null'  \;
 
 popd > /dev/null

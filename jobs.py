@@ -14,6 +14,7 @@ import subprocess
 import sys
 import re
 import logging
+import os
 
 # Configure the logging system once
 logging.basicConfig(
@@ -58,6 +59,40 @@ warning = logging.warning
 #                 debug(f"{p}: {last} steps → removed (too large)")
 #             except Exception as e:
 #                 error(f"{p}: {last} → failed to remove ({e})", file=sys.stderr)
+
+def load_env_file(env_path: Path) -> dict:
+    """
+    Load KEY=VAL lines from env_path into os.environ.
+    Ignores comments (#) and empty lines. Returns a dict of loaded values.
+    """
+    loaded = {}
+    if not env_path.exists():
+        return loaded
+
+    try:
+        text = env_path.read_text()
+    except Exception:
+        return loaded
+
+    for line in text.splitlines():
+        # strip comments and whitespace
+        line = line.split("#", 1)[0].strip()
+        if not line or "=" not in line:
+            continue
+        k, v = line.split("=", 1)
+        k = k.strip()
+        v = v.strip()
+        # remove optional surrounding quotes and parse safely
+        if (v.startswith('"') and v.endswith('"')) or (v.startswith("'") and v.endswith("'")):
+            v = v[1:-1]
+        try:
+            v = shlex.split(v)[0]
+        except Exception:
+            pass
+        os.environ[k] = v
+        loaded[k] = v
+    return loaded
+
 
 # New helper: remove empty directories under proofs_dir (bottom-up)
 def remove_empty_dirs(proofs_dir: Path) -> int:
@@ -136,6 +171,7 @@ def main():
 
     # Run check-setup.sh and propagate its exit code if it fails
     script_dir = Path(__file__).resolve().parent
+
     check_script = script_dir / "check-setup.sh"
     if check_script.exists():
         rc = subprocess.run(["bash", str(check_script)], cwd=str(script_dir)).returncode
@@ -147,6 +183,12 @@ def main():
 
     if not benchmark_dir.is_dir():
         raise NotADirectoryError(f"Benchmark directory does not exist: {benchmark_dir}")
+    
+    # load timeout.env into environment so subprocesses inherit the values
+    env_file = script_dir / "config.env"
+    loaded_env = load_env_file(env_file)
+    if loaded_env:
+        info(f"Loaded config.env: {', '.join(f'{k}={v}' for k,v in loaded_env.items())}")
 
     # Ensure base output dir exists
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -197,7 +239,7 @@ def main():
     run_script(script_dir / "gen-proof.sh", [benchmark_dir, job_dir])
 
     # clean-proof.sh <benchmark_dir> <proofs_dir> <logs_dir>
-    #run_script(script_dir / "clean-proof.sh", [benchmark_dir, proofs_dir, logs_dir])
+    # run_script(script_dir / "clean-proof.sh", [benchmark_dir, proofs_dir, logs_dir])
 
     info("Setup and auxiliary scripts completed successfully.")
 

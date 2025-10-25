@@ -46,3 +46,33 @@ EOF
 )"
 
 success "parallel installed ✔"
+
+# ripgrep (rg)
+check_binary "rg" "$(cat <<EOF
+You will need ripgrep (rg) to run this script.
+You can install ripgrep following the instructions at:
+https://github.com/BurntSushi/ripgrep?tab=readme-ov-file#installation
+EOF
+)"
+
+success "ripgrep installed ✔"
+
+# fd (find-fd)
+check_binary "rg" "$(cat <<EOF
+You will need fd (i.e. fd-find) to run this script.
+You can install find-fd following the instructions at:
+https://github.com/sharkdp/fd?tab=readme-ov-file#installation
+EOF
+)"
+
+success "fd installed ✔"
+
+# hyperfine
+check_binary "hyperfine" "$(cat <<EOF
+You will need hyperfine to run this script.
+You can install hyperfine following the instructions at:
+https://github.com/sharkdp/hyperfine?tab=readme-ov-file#installation
+EOF
+)"
+
+success "hyperfine installed ✔"

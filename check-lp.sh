@@ -16,7 +16,7 @@ pushd "${RUNDIR}" > /dev/null
     info  "Checking proofs..."
 
     pushd convert > /dev/null
-      fd -tf -e 'lp' -j 8 | parallel --joblog "${JOBLOGS}/lambdapi-checks.txt" --timeout=30s --will-cite --bar -j8  'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json ../results/{.}.json  "lambdapi check {}"' 2> /dev/null  \;
+      fd -tf -e 'lp' -j 8 | parallel --joblog "${JOBLOGS}/lambdapi-checks.txt" --timeout "${LAMBDAPI_CHECK_TIMEOUT:-60}" --will-cite --bar -j8  'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json ../results/{.}.json  "lambdapi check {}"' 2> /dev/null  \;
     popd > /dev/null
 
     pushd results > /dev/null
