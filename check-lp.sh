@@ -11,16 +11,33 @@ fi
 
 RUNDIR="${JOB_DIR}/run"
 JOBLOGS="${JOB_DIR}/logs"
+RESULTS_DIR="${RUNDIR}/results"
+
+export RESULTS_DIR JOBLOGS RESULTS_DIR
 
 pushd "${RUNDIR}" > /dev/null
     info  "Checking proofs..."
 
-    pushd convert > /dev/null
-      fd -tf -e 'lp' -j 8 | parallel --joblog "${JOBLOGS}/lambdapi-checks.txt" --timeout "${LAMBDAPI_CHECK_TIMEOUT:-60}" --will-cite --bar -j8  'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json ../results/{.}.json  "lambdapi check {}"' 2> /dev/null  \;
+    # --- SMALL ---
+    pushd convert/small > /dev/null
+      info "Checking small proofs..."
+
+      fd -tf -e 'lp' -j 8 \
+        | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-60}" \
+          --joblog "${JOBLOGS}/lambdapi_small_checks.txt" \
+          --will-cite --bar -j8 \
+          'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json "${RESULTS_DIR}/{.}.json" "lambdapi check -w -v0 {}"' 2> /dev/null
     popd > /dev/null
 
-    pushd results > /dev/null
-      info "Remove empty file in results/"
-      find . -type f -empty -delete
+    # --- LARGE ---
+    pushd convert/large > /dev/null
+      info "Checking large proofs..."
+
+      fd -td -d 1 \
+        | sed 's:/*$::' \
+        | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-120}" \
+          --joblog "${JOBLOGS}/lambdapi_large_checks.txt" \
+          --will-cite --bar -j8 \
+          'hyperfine --warmup 0 --max-runs 1 --time-unit millisecond --export-json "${RESULTS_DIR}/{}.json" "make -j8 -C {}"' 2> /dev/null
     popd > /dev/null
 popd > /dev/null

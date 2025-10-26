@@ -15,26 +15,30 @@ RUNDIR="${JOB_DIR}/run"
 PROOFS_DIR="${JOB_DIR}/proofs"
 JOBLOGS="${JOB_DIR}/logs"
 
-pushd "${PROOFS_DIR}" > /dev/null
-
-info  "Setup ${PROOFS_DIR} directory..."
-
-for dir in "alethe" "convert" "results"; do
-  fd . -t d -X mkdir -p ${RUNDIR}/${dir}/{} \;
-done
-
-popd > /dev/null
-
-info  "Elaborating proofs..."
-
 # export vars so GNU parallel jobs can use them
 export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS TEST_NAME
 
+info "Translating proofs..."
+
+# Ensure convert/small and convert/large exist
+mkdir -p "${RUNDIR}/convert/small" "${RUNDIR}/convert/large"
+
 # translate to lambdapi all .elab files (alethe -> convert)
+# run from the alethe dir so "../convert/..." points to RUNDIR/convert/...
 pushd "${RUNDIR}/alethe" > /dev/null
 
-  fd -tf -e 'elab' -j 8 ${TEST_NAME} | \
-    parallel --joblog "${JOBLOGS}/translate_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j8 \
-    'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" 1> "../convert/{.}.lp" 2> /dev/null'  \;
+# info "Translating small .elab files (< ${PROOF_SPLIT_LIMIT:-1M})..."
+
+# small files (< PROOF_SPLIT_LIMIT MB)
+fd -tf -e 'elab' --size -${PROOF_SPLIT_LIMIT:-1M} | \
+  parallel --joblog "${JOBLOGS}/translate_small_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j8 \
+    'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" 1> "../convert/small/{.}.lp" 2> /dev/null'  \;
+
+info "Translating large .elab files (> ${PROOF_SPLIT_LIMIT:-1M})..."
+
+## large files (> PROOF_SPLIT_LIMIT MB)
+fd -tf -e 'elab' --size +${PROOF_SPLIT_LIMIT:-1M} | \
+  parallel --joblog "${JOBLOGS}/translate_large_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j8 \
+    'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" -n "$SEGMENT_SIZE" -o "../convert/large/{.}" 2>/dev/null'
 
 popd > /dev/null
