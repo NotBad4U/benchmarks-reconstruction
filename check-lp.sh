@@ -19,6 +19,7 @@ pushd "${RUNDIR}" > /dev/null
     info  "Checking proofs..."
 
     # --- SMALL ---
+    if [ -d "convert/small" ]; then
     pushd convert/small > /dev/null
       info "Checking small proofs..."
 
@@ -28,16 +29,23 @@ pushd "${RUNDIR}" > /dev/null
           --will-cite --bar -j8 \
           'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json "${RESULTS_DIR}/{.}.json" "lambdapi check -w -v0 {}"' 2> /dev/null
     popd > /dev/null
+    else
+      warn "No small proofs (<${PROOF_SPLIT_LIMIT}B) to check (directory convert/large does not exist)."
+    fi
 
     # --- LARGE ---
-    pushd convert/large > /dev/null
-      info "Checking large proofs..."
+    if [ -d "convert/large" ]; then
+      pushd convert/large > /dev/null
+        info "Checking large proofs..."
 
-      fd -td -d 1 \
-        | sed 's:/*$::' \
-        | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-120}" \
-          --joblog "${JOBLOGS}/lambdapi_large_checks.txt" \
-          --will-cite --bar -j8 \
-          'hyperfine --warmup 0 --max-runs 1 --time-unit millisecond --export-json "${RESULTS_DIR}/{}.json" "make -j8 -C {}"' 2> /dev/null
-    popd > /dev/null
+        fd -td -d 1 \
+          | sed 's:/*$::' \
+          | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-120}" \
+            --joblog "${JOBLOGS}/lambdapi_large_checks.txt" \
+            --will-cite --bar -j8 \
+            'hyperfine --warmup 0 --max-runs 1 --time-unit millisecond --export-json "${RESULTS_DIR}/{}.json" "make -j8 -C {}"' 2> /dev/null
+      popd > /dev/null
+    else
+      warn "No large proofs (>${PROOF_SPLIT_LIMIT}B) to check (directory convert/large does not exist)."
+    fi
 popd > /dev/null

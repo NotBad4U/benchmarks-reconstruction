@@ -4,6 +4,7 @@
 output
 assets
 save
+benchs
 
 ### Python ###
 # Byte-compiled / optimized / DLL files

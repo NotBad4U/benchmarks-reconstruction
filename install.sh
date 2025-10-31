@@ -108,8 +108,9 @@ if [ ! -d lambdapi ]; then
     git clone https://github.com/Deducteam/lambdapi.git
 fi
 pushd lambdapi
+git config --global --add safe.directory "$(pwd)"
 git fetch origin
-git checkout dev-3.0.0-8-gdfc302e9 || git checkout tags/dev-3.0.0-8-gdfc302e9 || true
+git checkout 5e86167f09a270e8bb2b7b88ba8cc39175ceba81
 
 echo "[*] Installing Lambdapi dependencies with opam..."
 opam install . -y

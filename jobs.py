@@ -4,7 +4,13 @@
 run_benchmark.py — Simple script to initialize a benchmark job.
 
 Usage:
-    python run_benchmark.py --benchmark-dir /path/to/benchmarks [--output-dir /path/to/output]
+    python run_benchmark.py --benchmark-dir /path/to/benchmarks [--output-dir /path/to/output] [--max-stage N]
+
+Stage mapping:
+  0: generate proofs only
+  1: + elaborate
+  2: + translate
+  3: + lambdapi check (default if --max-stage omitted)
 """
 
 import argparse
@@ -15,6 +21,7 @@ import sys
 import re
 import logging
 import os
+import shlex  # needed by load_env_file
 
 # Configure the logging system once
 logging.basicConfig(
@@ -28,37 +35,6 @@ debug = logging.debug
 info = logging.info
 error = logging.error
 warning = logging.warning
-
-# def check_last_index(proofs_dir: Path, limit: int = 2000):
-#     """Scan .proof files under proofs_dir and print the last t<number> index found for each file.
-#     Delete files where the last step index exceeds `limit`.
-#     """
-#     step_pattern = re.compile(r'^\(step\s+t(\d+)\b', re.MULTILINE)
-
-#     for p in sorted(proofs_dir.rglob("*.proof")):
-#         try:
-#             with p.open("rb") as f:
-#                 # Read only the tail (last 8 KB) for speed
-#                 f.seek(0, 2)
-#                 size = f.tell()
-#                 f.seek(max(size - 8192, 0))
-#                 tail = f.read().decode("utf-8", errors="ignore")
-#         except Exception as e:
-#             print(f"{p}: <could not read> ({e})", file=sys.stderr)
-#             continue
-
-#         matches = step_pattern.findall(tail)
-#         if not matches:
-#             print(f"{p}: <no step found>")
-#             continue
-
-#         last = int(matches[-1])
-#         if last > limit:
-#             try:
-#                 p.unlink()
-#                 debug(f"{p}: {last} steps → removed (too large)")
-#             except Exception as e:
-#                 error(f"{p}: {last} → failed to remove ({e})", file=sys.stderr)
 
 def load_env_file(env_path: Path) -> dict:
     """
@@ -150,6 +126,9 @@ def remove_empty_entries(root: Path) -> (int, int):
 
     return removed_files, removed_dirs
 
+def clamp(n: int, lo: int, hi: int) -> int:
+    return max(lo, min(hi, n))
+
 def main():
     parser = argparse.ArgumentParser(description="Initialize a benchmark job.")
     parser.add_argument(
@@ -164,10 +143,17 @@ def main():
         default=Path("./output"),
         help="Optional output directory (default: ./output).",
     )
+    parser.add_argument(
+        "--max-stage",
+        type=int,
+        default=3,
+        help="Stop after this stage: 0=gen-proof, 1=elaborate, 2=translate, 3=check (default: 3).",
+    )
     args = parser.parse_args()
 
     benchmark_dir = args.benchmark_dir.resolve()
     output_dir = args.output_dir.resolve()
+    max_stage = clamp(args.max_stage, 0, 3)
 
     # Run check-setup.sh and propagate its exit code if it fails
     script_dir = Path(__file__).resolve().parent
@@ -184,7 +170,7 @@ def main():
     if not benchmark_dir.is_dir():
         raise NotADirectoryError(f"Benchmark directory does not exist: {benchmark_dir}")
     
-    # load timeout.env into environment so subprocesses inherit the values
+    # load config.env into environment so subprocesses inherit the values
     env_file = script_dir / "config.env"
     loaded_env = load_env_file(env_file)
     if loaded_env:
@@ -213,6 +199,7 @@ def main():
     info(f"Benchmark directory: {benchmark_dir}")
     info(f"Output directory:    {output_dir}")
     info(f"Job directory:       {job_dir}")
+    info(f"Max stage:           {max_stage}")
 
     # Write job info to file (job id and benchmark directory path)
     job_file = job_dir / "job_id.txt"
@@ -223,47 +210,58 @@ def main():
     def run_script(script_path, args):
         if not script_path.exists():
             info(f"{script_path.name} not found; skipping", file=sys.stderr)
-            return
+            return 0
         rc = subprocess.run(["bash", str(script_path)] + [str(a) for a in args], cwd=str(script_dir)).returncode
         if rc != 0:
             error(f"{script_path.name} failed with exit code {rc}", file=sys.stderr)
             sys.exit(rc)
+        return rc
 
     proofs_dir = job_dir / "proofs"
     logs_dir = job_dir / "logs"
 
+    # -------- Stage 0: generate cvc5/veriT proofs --------
     # clean-benchs.sh <benchmark_dir>
     run_script(script_dir / "clean-benchs.sh", [benchmark_dir])
 
-    # gen-proof.sh <benchmark_dir> <proofs_dir> <logs_dir>
+    # gen-proof.sh <benchmark_dir> <job_dir>
     run_script(script_dir / "gen-proof.sh", [benchmark_dir, job_dir])
 
-    # clean-proof.sh <benchmark_dir> <proofs_dir> <logs_dir>
-    # run_script(script_dir / "clean-proof.sh", [benchmark_dir, proofs_dir, logs_dir])
-
-    info("Setup and auxiliary scripts completed successfully.")
-
-    # Check last t<number> index in each proof file (done in Python)
-    # check_last_index(proofs_dir,10000)
-
-    # Remove empty directories left in proofs/ after cleaning
+    # optional cleaning under proofs/
     (remfiles, remdirs) = remove_empty_entries(proofs_dir)
     debug(f"Removed {remfiles} empty files and {remdirs} directories under {proofs_dir}")
 
+    if max_stage == 0:
+        info("Stopping after stage 0 (proof generation).")
+        return
+
+    # -------- Stage 1: elaborate (Alethe elaboration) --------
     run_script(script_dir / "elaborate.sh", [job_dir, benchmark_dir])
 
     (remfiles, remdirs) = remove_empty_entries(job_dir / "run" / "alethe")
-    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / "run" / "alethe"}")
+    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / 'run' / 'alethe'}")
 
+    if max_stage == 1:
+        info("Stopping after stage 1 (elaboration).")
+        return
+
+    # -------- Stage 2: translate to Lambdapi --------
     run_script(script_dir / "translate.sh", [job_dir, benchmark_dir])
 
     (remfiles, remdirs) = remove_empty_entries(job_dir / "run" / "convert")
-    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / "run" / "convert"}")
+    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / 'run' / 'convert'}")
 
+    if max_stage == 2:
+        info("Stopping after stage 2 (translation).")
+        return
+
+    # -------- Stage 3: check with Lambdapi --------
     run_script(script_dir / "check-lp.sh", [job_dir])
 
     (remfiles, remdirs) = remove_empty_entries(job_dir / "run" / "results")
-    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / "run" / "results"}")
+    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / 'run' / 'results'}")
+
+    info("Pipeline completed successfully (stage 3).")
 
 if __name__ == "__main__":
     main()
