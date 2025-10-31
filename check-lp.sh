@@ -30,7 +30,7 @@ pushd "${RUNDIR}" > /dev/null
           'hyperfine --warmup 3 --max-runs 10 --time-unit millisecond --export-json "${RESULTS_DIR}/{.}.json" "lambdapi check -w -v0 {}"' 2> /dev/null
     popd > /dev/null
     else
-      warn "No small proofs (<${PROOF_SPLIT_LIMIT}B) to check (directory convert/large does not exist)."
+      warn "No small proofs (<${PROOF_SPLIT_LIMIT}B) to check (directory convert/small does not exist)."
     fi
 
     # --- LARGE ---

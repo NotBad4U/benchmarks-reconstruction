@@ -16,7 +16,7 @@ PROOFS_DIR="${JOB_DIR}/proofs"
 JOBLOGS="${JOB_DIR}/logs"
 
 # export vars so GNU parallel jobs can use them
-export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS TEST_NAME
+export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS
 
 info "Translating proofs..."
 
@@ -27,7 +27,11 @@ mkdir -p "${RUNDIR}/convert/small" "${RUNDIR}/convert/large"
 # run from the alethe dir so "../convert/..." points to RUNDIR/convert/...
 pushd "${RUNDIR}/alethe" > /dev/null
 
-# info "Translating small .elab files (< ${PROOF_SPLIT_LIMIT:-1M})..."
+for dir in "convert/small" "convert/large" "results"; do
+  fd . -t d -X mkdir -p ${RUNDIR}/${dir}/{} \;
+done
+
+info "Translating small .elab files (< ${PROOF_SPLIT_LIMIT:-1M})..."
 
 # small files (< PROOF_SPLIT_LIMIT MB)
 fd -tf -e 'elab' --size -${PROOF_SPLIT_LIMIT:-1M} | \

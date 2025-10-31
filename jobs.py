@@ -248,8 +248,8 @@ def main():
     # -------- Stage 2: translate to Lambdapi --------
     run_script(script_dir / "translate.sh", [job_dir, benchmark_dir])
 
-    (remfiles, remdirs) = remove_empty_entries(job_dir / "run" / "convert")
-    debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / 'run' / 'convert'}")
+    # (remfiles, remdirs) = remove_empty_entries(job_dir / "run" / "convert")
+    # debug(f"Removed {remfiles} empty files and {remdirs} directories under {job_dir / 'run' / 'convert'}")
 
     if max_stage == 2:
         info("Stopping after stage 2 (translation).")
