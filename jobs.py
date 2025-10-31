@@ -1,4 +1,4 @@
-#!./python
+#!/usr/bin/env python3
 
 """
 run_benchmark.py — Simple script to initialize a benchmark job.
