@@ -23,7 +23,7 @@ pushd "${RUNDIR}" > /dev/null
     pushd convert/small > /dev/null
       info "Checking small proofs..."
 
-      fd -tf -e 'lp' -j ${PARALLEL_JOBS:-8} \
+      fd -tf -e 'lp' -j $(nproc) \
         | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-60}" \
           --joblog "${JOBLOGS}/lambdapi_small_checks.txt" \
           --will-cite --bar -j${PARALLEL_JOBS:-8} \
@@ -38,7 +38,7 @@ pushd "${RUNDIR}" > /dev/null
       pushd convert/large > /dev/null
         info "Checking large proofs..."
 
-        fd -td . \
+        fd -td . -j $(nproc) \
           -x sh -c 'fd -td . "$1" -d 1 -q || printf "%s\n" "$1"' sh {} \
           | sed 's:/*$::' \
           | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-120}" \

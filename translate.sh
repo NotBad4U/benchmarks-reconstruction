@@ -34,14 +34,14 @@ done
 info "Translating small .elab files (< ${PROOF_SPLIT_LIMIT:-1M})..."
 
 # small files (< PROOF_SPLIT_LIMIT MB)
-fd -tf -e 'elab' --size -${PROOF_SPLIT_LIMIT:-1M} | \
+fd -tf -e 'elab' -j $(nproc) --size -${PROOF_SPLIT_LIMIT:-1M} | \
   parallel --joblog "${JOBLOGS}/translate_small_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j${PARALLEL_JOBS:-8} \
     'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" 1> "../convert/small/{.}.lp" 2> /dev/null'  \;
 
 info "Translating large .elab files (> ${PROOF_SPLIT_LIMIT:-1M})..."
 
 ## large files (> PROOF_SPLIT_LIMIT MB)
-fd -tf -e 'elab' --size +${PROOF_SPLIT_LIMIT:-1M} | \
+fd -tf -e 'elab' -j $(nproc) --size +${PROOF_SPLIT_LIMIT:-1M} | \
   parallel --joblog "${JOBLOGS}/translate_large_logs.txt" --timeout "${CARCARA_TRANSLATE_TIMEOUT:-60}" --will-cite --bar -j${PARALLEL_JOBS:-8} \
     'carcara translate --no-elab -i {} "$BENCH_DIR/{.}.smt2" -n "$SEGMENT_SIZE" -o "../convert/large/{.}" 2>/dev/null'
 
