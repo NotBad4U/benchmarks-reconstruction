@@ -32,7 +32,7 @@ export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS TEST_NAME
 
 # ELAB: process .proof files under job-specific proofs directory
 pushd "${PROOFS_DIR}" > /dev/null
-  fd . -tf -e 'proof' -j 8 | \
-    parallel --joblog "${JOBLOGS}/elab_logs.txt" --timeout "${CARCARA_CHECK_ELAB_TIMEOUT:-60}" --will-cite --bar -j8 \
+  fd . -tf -e 'proof' -j ${PARALLEL_JOBS:-8} | \
+    parallel --joblog "${JOBLOGS}/elab_logs.txt" --timeout "${CARCARA_CHECK_ELAB_TIMEOUT:-60}" --will-cite --bar -j${PARALLEL_JOBS:-8} \
       'carcara elaborate --no-print-with-sharing --expand-let-bindings -i --log off {} "$BENCH_DIR/{.}.smt2" 1> "$RUNDIR/alethe/{.}.elab"'  \;
 popd > /dev/null

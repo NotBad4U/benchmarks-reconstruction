@@ -23,7 +23,7 @@ pushd "${RUNDIR}" > /dev/null
     pushd convert/small > /dev/null
       info "Checking small proofs..."
 
-      fd -tf -e 'lp' -j 8 \
+      fd -tf -e 'lp' -j ${PARALLEL_JOBS:-8} \
         | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-60}" \
           --joblog "${JOBLOGS}/lambdapi_small_checks.txt" \
           --will-cite --bar -j${PARALLEL_JOBS:-8} \
