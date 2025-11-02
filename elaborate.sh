@@ -32,10 +32,7 @@ export BENCH_DIR RUNDIR PROOFS_DIR JOBLOGS TEST_NAME
 
 # ELAB: process .proof files under job-specific proofs directory
 pushd "${PROOFS_DIR}" > /dev/null
-  #FIXME: workaround to remove 'unsat' line and empty parentheses lines
-  fd . -tf -e 'proof' -j 8 -X sed -i '' -e '1{/^unsat$/d;}' -e '/^[[:space:]]*([[:space:]]*$/d' -e '/^[[:space:]]*)[[:space:]]*$/d' {}
-
   fd . -tf -e 'proof' -j 8 | \
     parallel --joblog "${JOBLOGS}/elab_logs.txt" --timeout "${CARCARA_CHECK_ELAB_TIMEOUT:-60}" --will-cite --bar -j8 \
-      'carcara check --log off -i {} "$BENCH_DIR/{.}.smt2" > /dev/null 2>&1 && carcara elaborate --uncrowd-rotate --no-print-with-sharing --expand-let-bindings -i --log off {} "$BENCH_DIR/{.}.smt2" 1> "$RUNDIR/alethe/{.}.elab"'  \;
+      'carcara elaborate --no-print-with-sharing --expand-let-bindings -i --log off {} "$BENCH_DIR/{.}.smt2" 1> "$RUNDIR/alethe/{.}.elab"'  \;
 popd > /dev/null
