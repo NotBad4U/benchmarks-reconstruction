@@ -44,7 +44,7 @@ pushd "${RUNDIR}" > /dev/null
           | parallel --timeout "${LAMBDAPI_CHECK_TIMEOUT:-120}" \
             --joblog "${JOBLOGS}/lambdapi_large_checks.txt" \
             --will-cite --bar -j${PARALLEL_JOBS:-8} \
-            'hyperfine --warmup 0 --max-runs ${MAX_RUN_HYPERFINE_LARGE:-1} --time-unit millisecond --export-json "${RESULTS_DIR}/{}.json" "make -j8 -C {}"' 2> /dev/null
+            'hyperfine --warmup 0 --max-runs ${MAX_RUN_HYPERFINE_LARGE:-1} --time-unit millisecond --export-json "${RESULTS_DIR}/{}.json" "make -j -C {}"' 2> /dev/null
       popd > /dev/null
     else
       warn "No large proofs (>${PROOF_SPLIT_LIMIT}B) to check (directory convert/large does not exist)."
