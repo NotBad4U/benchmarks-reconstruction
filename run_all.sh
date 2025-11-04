@@ -14,7 +14,7 @@
 source color-logger.bash
 
 # Create a timestamped directory for this batch run
-BATCH_DIR="benchmarks-$(date +%Y%m%d-%H%M%S)"
+BATCH_DIR="/home/acoltell/public/benchmarks-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "${BATCH_DIR}"
 
 info "Starting benchmark batch, results will be in: ${BATCH_DIR}"
