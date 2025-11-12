@@ -34,6 +34,8 @@ LOG_MAP: Mapping[str, str] = {
     "elab_logs.txt": "elaboration",
     "translate_small_logs.txt": "translate_small",
     "translate_large_logs.txt": "translate_large",
+    "lambdapi_small_checks.txt": "lambdapi_small_check",
+    "lambdapi_large_checks.txt": "lambdapi_large_check",
 }
 
 JSON_LOG_KIND = "lambdapi"  # kind label for Lambdapi JSON results
@@ -245,7 +247,7 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
     runtimes: Dict[str, List[float]] = {}
 
     # Lambdapi accumulators
-    total = success = failure = 0
+    # total = success = failure = 0
     weighted_numer = 0.0
     weighted_denom = 0.0
     mean_list_ms: List[float] = []  # used for Q1/Q3 and min/max    # CHANGED
@@ -265,12 +267,6 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
 
         # ---------- Lambdapi JSON aggregation ----------
         if r.log_kind == JSON_LOG_KIND:
-            total += 1
-            if r.status == "success":
-                success += 1
-            else:
-                failure += 1
-
             # Per-file mean (ms)
             mean_ms = float(r.mean_ms if r.mean_ms is not None else r.jobruntime_seconds)
             mean_list_ms.append(mean_ms)
@@ -306,11 +302,6 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
         "job_id": job_dir.name,
         "benchmark_type": btype,
         "benchmark_name": bname,
-        # Lambdapi (ms)
-        "total_checks": total,
-        "successful_checks": success,
-        "failed_checks": failure,
-        "timeout_checks": 0,
         "weighted_mean_time": round(weighted_mean_ms * 1000, 0),
         "min_lp": round(min_ms * 1000, 0),
         "q1_lp": round(q1_lp * 1000, 0),
@@ -327,7 +318,6 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
             f"{kind}_error": counts.get((kind, "error"), 0),
         })
         rt = [x for x in runtimes.get(kind, []) if isinstance(x, (int, float))]
-        n = len(rt)
 
         try:
             qs = statistics.quantiles(rt, n=4)
@@ -336,6 +326,8 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
             q1 = min(rt)
             q3 = max(rt)
             median = rt[0] if len(rt) == 1 else 0.0
+
+        n = counts.get((kind, "success"), 0) + counts.get((kind, "timeout"), 0) + counts.get((kind, "error"), 0)
 
         stats.update({
             f"{kind}_count": n,
@@ -365,8 +357,7 @@ def print_job_report(job_dir: Path,
     print(f"\n=== Job Directory: {job_dir.name} ===")
     print(f"Benchmark: {btype}/{bname}")
 
-    kinds = sorted({k for (k, _) in counts.keys()})
-    for kind in kinds:
+    for kind in list(LOG_MAP.values()):
         if kind == JSON_LOG_KIND:
             continue
         print(f"\n  {kind}:")
@@ -384,13 +375,8 @@ def print_job_report(job_dir: Path,
         print(f"      Max:    {stats[f"{kind}_max"]:.3f}s")
             
 
-    if stats["total_checks"] > 0:
-        print(f"\n  Lambdapi Checks:")
-        print(f"    Total checks: {int(stats['total_checks'])}")
-        print(f"    Successful: {int(stats['successful_checks'])}")
-        print(f"    Failed: {int(stats['failed_checks'])}")
-        print(f"    Timeout: {int(stats['timeout_checks'])}")
-        print(f"    Timing stats (ms):")
+    if stats["lambdapi_small_check_count"] > 0 or stats["lambdapi_large_check_count"] > 0 :
+        print(f"\n  Lambdapi Checks Timing stats (ms):")
         print(f"      Weighted mean: {stats['weighted_mean_time']:.0f} ms")
         print(f"      Min:           {stats['min_lp']:.0f} ms")
         print(f"      Q1:            {stats['q1_lp']:.0f} ms")
@@ -422,10 +408,6 @@ def _csv_fieldnames() -> List[str]:
         "benchmark_type",
         "benchmark_name",
         *stage_fields,
-        "total_checks",
-        "successful_checks",
-        "failed_checks",
-        "timeout_checks",
         "weighted_mean_time",
         "min_lp",
         "q1_lp",
@@ -479,19 +461,6 @@ def main() -> None:
             # Parse JSON (ms)
             collect_results(dpath, meta, rows)
 
-            timeouts_by_job_id : Dict[str, int] = dict()
-            rows_check: List[Row] = []
-            # Parse Lambdapi check logs only for timeout counting
-            for filename, kind in (
-                ("lambdapi_large_checks.txt", "lambdapi_large"),
-                ("lambdapi_small_checks.txt", "lambdapi_small"),
-            ):
-                log_path = logs_dir / filename
-                if log_path.exists():
-                    parse_log_file(log_path, meta, rows_check, log_kind=kind)
-            timeouts_by_job_id[job_id] = sum(1 for r in rows_check if r.status == "timeout")
-
-
             if rows:
                 jobs[dpath] = rows
 
@@ -504,10 +473,8 @@ def main() -> None:
         # Output
         for job_dir, job_rows in sorted_jobs:
             stats, counts = collect_job_stats(job_dir, job_rows)
-            stats["timeout_checks"] = int(timeouts_by_job_id.get(stats["job_id"], 0))
-            stats["total_checks"] += int(timeouts_by_job_id.get(stats["job_id"], 0))
 
-            if args.skip_empty and stats["total_checks"] == 0:
+            if args.skip_empty and (stats["lambdapi_small_check_count"] > 0 or stats["lambdapi_small_check_count"] > 0):
                 continue
             print_job_report(job_dir, job_rows, stats, counts)
 
