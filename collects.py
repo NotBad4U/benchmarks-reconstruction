@@ -323,20 +323,23 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
             qs = statistics.quantiles(rt, n=4)
             q1, median, q3 = qs[0], qs[1], qs[2]
         except statistics.StatisticsError:
-            q1 = min(rt)
-            q3 = max(rt)
+            q1 = min(rt) if len(rt) == 1 else 0.0
+            q3 = max(rt) if len(rt) == 1 else 0.0
             median = rt[0] if len(rt) == 1 else 0.0
 
         n = counts.get((kind, "success"), 0) + counts.get((kind, "timeout"), 0) + counts.get((kind, "error"), 0)
+        mean = round(sum(rt) / n, 3) if n > 0 else 0.0
+        min_time = round(min(rt), 3) if rt else 0.0
+        max_time = round(max(rt), 3) if rt else 0.0
 
         stats.update({
             f"{kind}_count": n,
-            f"{kind}_mean": round(sum(rt) / n, 3),
-            f"{kind}_min": round(min(rt), 3),
+            f"{kind}_mean": mean,
+            f"{kind}_min": min_time,
             f"{kind}_q1": round(q1, 3),
             f"{kind}_median": round(median, 3),
             f"{kind}_q3": round(q3, 3),
-            f"{kind}_max": round(max(rt), 3),
+            f"{kind}_max": max_time,
         })
 
     return stats, counts
@@ -375,7 +378,7 @@ def print_job_report(job_dir: Path,
         print(f"      Max:    {stats[f"{kind}_max"]:.3f}s")
             
 
-    if stats["lambdapi_small_check_count"] > 0 or stats["lambdapi_large_check_count"] > 0 :
+    if stats["lambdapi_small_check_success"] > 0 or stats["lambdapi_large_check_success"] > 0 :
         print(f"\n  Lambdapi Checks Timing stats (ms):")
         print(f"      Weighted mean: {stats['weighted_mean_time']:.0f} ms")
         print(f"      Min:           {stats['min_lp']:.0f} ms")
@@ -474,7 +477,7 @@ def main() -> None:
         for job_dir, job_rows in sorted_jobs:
             stats, counts = collect_job_stats(job_dir, job_rows)
 
-            if args.skip_empty and (stats["lambdapi_small_check_count"] > 0 or stats["lambdapi_small_check_count"] > 0):
+            if args.skip_empty and (stats["lambdapi_small_check_success"] == 0 and stats["lambdapi_small_check_success"] == 0):
                 continue
             print_job_report(job_dir, job_rows, stats, counts)
 
