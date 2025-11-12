@@ -127,7 +127,7 @@ def classify(exitval_str: str, signal_str: str) -> str:
     return "error"
 
 
-def parse_log_file(log_path: Path, meta: MetaCommon, rows_out: List[Row]) -> None:
+def parse_log_file(log_path: Path, meta: MetaCommon, rows_out: List[Row], log_kind: str | None = None) -> None:
     """Parse a text log TSV and append normalized rows (seconds) to rows_out."""
     try:
         with log_path.open(encoding="utf-8") as f:
@@ -162,7 +162,7 @@ def parse_log_file(log_path: Path, meta: MetaCommon, rows_out: List[Row]) -> Non
                     signal=str(signal),
                     status=status,
                     command=command,
-                    log_kind=LOG_MAP[log_path.name],
+                    log_kind=log_kind or LOG_MAP[log_path.name],
                     job_dir=str(meta.job_dir),
                 ))
     except FileNotFoundError:
@@ -210,7 +210,7 @@ def collect_results(root: Path, meta: MetaCommon, rows_out: List[Row]) -> None:
     if not results_dir.exists():
         return
 
-    for json_file in results_dir.glob("*.json"):
+    for json_file in results_dir.rglob("*.json"):
         success, mean_ms, n_samples, times_ms = analyze_json_results(json_file)
         status = "success" if success else "error"
         rows_out.append(Row(
@@ -218,7 +218,6 @@ def collect_results(root: Path, meta: MetaCommon, rows_out: List[Row]) -> None:
             benchmark_type=meta.benchmark_type,
             benchmark_name=meta.benchmark_name,
             seq=json_file.stem,
-            # NOTE: historical field name; stores ms for Lambdapi:
             jobruntime_seconds=float(mean_ms),
             exitval="0" if success else "1",
             signal="0",
@@ -258,9 +257,13 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
         kind_status = (r.log_kind, r.status)
         counts[kind_status] = counts.get(kind_status, 0) + 1
 
-        # Per-kind runtimes (text logs in seconds; Lambdapi stored in ms here)
-        runtimes.setdefault(r.log_kind, []).append(float(r.jobruntime_seconds))
+        # ---------- LOGS: build per-kind runtimes, but EXCLUDE timeouts ----------
+        # (This is where cvc5/elaboration/translate_* get their stats from.)
+        if r.log_kind in LOG_MAP.values() and r.status != "timeout":
+            # text logs store seconds in jobruntime_seconds
+            runtimes.setdefault(r.log_kind, []).append(float(r.jobruntime_seconds))
 
+        # ---------- Lambdapi JSON aggregation ----------
         if r.log_kind == JSON_LOG_KIND:
             total += 1
             if r.status == "success":
@@ -307,16 +310,16 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
         "total_checks": total,
         "successful_checks": success,
         "failed_checks": failure,
-        "timeout_checks": total - (success + failure),
-        "weighted_mean_time": weighted_mean_ms * 1000,
-        "min_time": min_ms * 1000,
-        "q1_time": q1_lp * 1000,
-        "median": median_lp * 1000,
-        "q3_time": q3_lp * 1000,
-        "max_time": max_ms * 1000,
+        "timeout_checks": 0,
+        "weighted_mean_time": round(weighted_mean_ms * 1000, 0),
+        "min_lp": round(min_ms * 1000, 0),
+        "q1_lp": round(q1_lp * 1000, 0),
+        "median_lp": round(median_lp * 1000, 0),
+        "q3_lp": round(q3_lp * 1000, 0),
+        "max_lp": round(max_ms * 1000, 0),
     }
 
-    # Per-stage (text logs) in seconds
+     # Per-stage (text logs) in seconds
     for kind in LOG_MAP.values():
         stats.update({
             f"{kind}_success": counts.get((kind, "success"), 0),
@@ -324,42 +327,27 @@ def collect_job_stats(job_dir: Path, rows: List[Row]):
             f"{kind}_error": counts.get((kind, "error"), 0),
         })
         rt = [x for x in runtimes.get(kind, []) if isinstance(x, (int, float))]
-        if rt:
+        n = len(rt)
+
+        try:
             qs = statistics.quantiles(rt, n=4)
             q1, median, q3 = qs[0], qs[1], qs[2]
+        except statistics.StatisticsError:
+            q1 = min(rt)
+            q3 = max(rt)
+            median = rt[0] if len(rt) == 1 else 0.0
 
-            stats.update({
-                f"{kind}_count": len(rt),
-                f"{kind}_mean": round(sum(rt) / len(rt), 3),
-                f"{kind}_min": round(min(rt), 3),
-                f"{kind}_q1": round(q1, 3),
-                f"{kind}_median": round(median, 3),
-                f"{kind}_q3": round(q3, 3),
-                f"{kind}_max": round(max(rt), 3),
-            })
-        else:
-            stats.update({
-                f"{kind}_count": 0,
-                f"{kind}_min": 0.0,
-                f"{kind}_q1": 0.0,
-                f"{kind}_mean": 0.0,
-                f"{kind}_q3": 0.0,
-                f"{kind}_max": 0.0,
-            })
+        stats.update({
+            f"{kind}_count": n,
+            f"{kind}_mean": round(sum(rt) / n, 3),
+            f"{kind}_min": round(min(rt), 3),
+            f"{kind}_q1": round(q1, 3),
+            f"{kind}_median": round(median, 3),
+            f"{kind}_q3": round(q3, 3),
+            f"{kind}_max": round(max(rt), 3),
+        })
 
-    json_stats_print = {
-        "total": total,
-        "success": success,
-        "failure": failure,
-        "timeout": total - (success + failure),
-        "weighted_mean_time": round(weighted_mean_ms * 1000, 2),
-        "min_time": round(min_ms * 1000, 2),
-        "q1_time": round(q1_lp * 1000, 2),
-        "median": round(median_lp * 1000, 2),
-        "q3_time": round(q3_lp * 1000, 2),
-        "max_time": round(max_ms * 1000, 2),
-    }
-    return stats, counts, json_stats_print
+    return stats, counts
 
 # =============
 # Pretty Output
@@ -369,7 +357,7 @@ def print_job_report(job_dir: Path,
                      rows: List[Row],
                      stats: Dict[str, Any],
                      counts: Mapping[Tuple[str, str], int],
-                     json_stats: Mapping[str, float]) -> None:
+                    ) -> None:
     """Pretty-print per-job summary. Lambdapi in ms; text logs in seconds."""
     btype = rows[0].benchmark_type if rows else "unknown"
     bname = rows[0].benchmark_name if rows else "unknown"
@@ -396,19 +384,19 @@ def print_job_report(job_dir: Path,
         print(f"      Max:    {stats[f"{kind}_max"]:.3f}s")
             
 
-    if json_stats.get("total", 0) > 0:
+    if stats["total_checks"] > 0:
         print(f"\n  Lambdapi Checks:")
-        print(f"    Total checks: {int(json_stats['total'])}")
-        print(f"    Successful: {int(json_stats['success'])}")
-        print(f"    Failed: {int(json_stats['failure'])}")
-        print(f"    Timeout: {int(json_stats['timeout'])}")
+        print(f"    Total checks: {int(stats['total_checks'])}")
+        print(f"    Successful: {int(stats['successful_checks'])}")
+        print(f"    Failed: {int(stats['failed_checks'])}")
+        print(f"    Timeout: {int(stats['timeout_checks'])}")
         print(f"    Timing stats (ms):")
-        print(f"      Weighted mean: {json_stats['weighted_mean_time']:.3f} ms")
-        print(f"      Min:           {json_stats['min_time']:.3f} ms")
-        print(f"      Q1:            {json_stats['q1_time']:.3f} ms")
-        print(f"      Median:        {json_stats['median']:.3f} ms")
-        print(f"      Q3:            {json_stats['q3_time']:.3f} ms")
-        print(f"      Max:           {json_stats['max_time']:.3f} ms")
+        print(f"      Weighted mean: {stats['weighted_mean_time']:.0f} ms")
+        print(f"      Min:           {stats['min_lp']:.0f} ms")
+        print(f"      Q1:            {stats['q1_lp']:.0f} ms")
+        print(f"      Median:        {stats['median_lp']:.0f} ms")
+        print(f"      Q3:            {stats['q3_lp']:.0f} ms")
+        print(f"      Max:           {stats['max_lp']:.0f} ms")
 
 # =====
 # Main
@@ -439,11 +427,11 @@ def _csv_fieldnames() -> List[str]:
         "failed_checks",
         "timeout_checks",
         "weighted_mean_time",
-        "min_time",
-        "q1_time",
-        "median",
-        "q3_time",
-        "max_time",
+        "min_lp",
+        "q1_lp",
+        "median_lp",
+        "q3_lp",
+        "max_lp",
     ]
 
 
@@ -491,6 +479,19 @@ def main() -> None:
             # Parse JSON (ms)
             collect_results(dpath, meta, rows)
 
+            timeouts_by_job_id : Dict[str, int] = dict()
+            rows_check: List[Row] = []
+            # Parse Lambdapi check logs only for timeout counting
+            for filename, kind in (
+                ("lambdapi_large_checks.txt", "lambdapi_large"),
+                ("lambdapi_small_checks.txt", "lambdapi_small"),
+            ):
+                log_path = logs_dir / filename
+                if log_path.exists():
+                    parse_log_file(log_path, meta, rows_check, log_kind=kind)
+            timeouts_by_job_id[job_id] = sum(1 for r in rows_check if r.status == "timeout")
+
+
             if rows:
                 jobs[dpath] = rows
 
@@ -502,12 +503,13 @@ def main() -> None:
 
         # Output
         for job_dir, job_rows in sorted_jobs:
-            stats, counts, json_stats = collect_job_stats(job_dir, job_rows)
+            stats, counts = collect_job_stats(job_dir, job_rows)
+            stats["timeout_checks"] = int(timeouts_by_job_id.get(stats["job_id"], 0))
+            stats["total_checks"] += int(timeouts_by_job_id.get(stats["job_id"], 0))
 
             if args.skip_empty and stats["total_checks"] == 0:
                 continue
-
-            print_job_report(job_dir, job_rows, stats, counts, json_stats)
+            print_job_report(job_dir, job_rows, stats, counts)
 
             if csv_writer is not None:
                 csv_writer.writerow(stats)
