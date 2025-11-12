@@ -5,6 +5,8 @@ output
 assets
 save
 benchs
+benchmarks-*
+*.csv
 
 ### Python ###
 # Byte-compiled / optimized / DLL files
