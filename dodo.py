@@ -368,7 +368,7 @@ def do_translate_large(stem: str) -> bool:
 
 @create_after(executed="elaborate", target_regex=r".*/status/translate_.*\.json")
 def task_translate():
-    """carcara translate -> convert/small/<stem>.lp or convert/large/<stem>/
+    """carcara translate -> convert/{small,large}/<stem>.lp
 
     The routing depends on the size of a file produced by the *previous* stage.
     That is the piece a static Makefile cannot express without re-invoking make.
