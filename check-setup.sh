@@ -38,15 +38,6 @@ EOF
 
 success "Lambdapi installed ✔"
 
-check_binary "parallel" "$(cat <<EOF
-You will need parallel to run this script.
-Install it using your package manager. E.g. for homebrew:
-brew install parallel
-EOF
-)"
-
-success "parallel installed ✔"
-
 # ripgrep (rg)
 check_binary "rg" "$(cat <<EOF
 You will need ripgrep (rg) to run this script.
@@ -58,7 +49,7 @@ EOF
 success "ripgrep installed ✔"
 
 # fd (find-fd)
-check_binary "rg" "$(cat <<EOF
+check_binary "fd" "$(cat <<EOF
 You will need fd (i.e. fd-find) to run this script.
 You can install find-fd following the instructions at:
 https://github.com/sharkdp/fd?tab=readme-ov-file#installation

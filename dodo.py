@@ -85,7 +85,12 @@ CVC5_TIMEOUT = float(os.environ.get("CVC5_TIMEOUT", 30))
 ELAB_TIMEOUT = float(os.environ.get("CARCARA_CHECK_ELAB_TIMEOUT", 60))
 TRANSLATE_TIMEOUT = float(os.environ.get("CARCARA_TRANSLATE_TIMEOUT", 60))
 CHECK_TIMEOUT = float(os.environ.get("LAMBDAPI_CHECK_TIMEOUT", 60))
-SEGMENT_SIZE = os.environ.get("SEGMENT_SIZE", "1000")
+SEGMENT_SIZE = os.environ.get("SEGMENT_SIZE", "1000")  # unused: carcara 1.1 dropped -n
+TRANSLATE_TARGET = os.environ.get("TRANSLATE_TARGET", "lambdapi")
+# dsl-rewrite makes cvc5 emit `rare_rewrite` steps, which carcara can only
+# check when given the RARE database via --rare-file.  Without that file every
+# elaboration fails with "the rule <name> wasn't found".
+PROOF_GRANULARITY = os.environ.get("PROOF_GRANULARITY", "dsl-rewrite")
 MAX_RUNS_SMALL = os.environ.get("MAX_RUN_HYPERFINE_SMALL", "10")
 MAX_RUNS_LARGE = os.environ.get("MAX_RUN_HYPERFINE_LARGE", "1")
 
@@ -221,6 +226,20 @@ def problem_for(stem: str) -> Path:
     return BENCH_DIR / f"{stem}.smt2"
 
 
+def split_status_line(path: Path) -> str:
+    """Remove carcara's leading status word from a proof file, returning it."""
+    if not path.exists() or path.stat().st_size == 0:
+        return ""
+    with path.open("rb") as fh:
+        first = fh.readline()
+        rest = fh.read()
+    word = first.decode(errors="ignore").strip()
+    if not word or word.startswith("("):
+        return ""  # no status line; leave the file alone
+    path.write_bytes(rest)
+    return word
+
+
 def drop_if_empty(path: Path) -> bool:
     """jobs.py's remove_empty_entries(), applied at the point of production."""
     if path.exists() and path.stat().st_size == 0:
@@ -238,7 +257,7 @@ def do_gen_proof(stem: str) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "cvc5", "--produce-proofs", "--dump-proofs",
-        "--proof-format-mode=alethe", "--proof-granularity=dsl-rewrite",
+        "--proof-format-mode=alethe", f"--proof-granularity={PROOF_GRANULARITY}",
         "--proof-alethe-res-pivots", "--proof-elim-subtypes",
         "--print-arith-lit-token", str(problem_for(stem)),
     ]
@@ -289,8 +308,13 @@ def do_elaborate(stem: str) -> bool:
         str(PROOFS / f"{stem}.proof"), str(problem_for(stem)),
     ]
     ev, sg, start, wall = run_limited(cmd, ELAB_TIMEOUT, stdout_path=out)
+    # carcara 1.1 prefixes the elaborated proof with a status word ("holey"
+    # when -i turned unknown rules into holes).  `translate` cannot parse it,
+    # so strip it here and keep it as data: it says whether the proof still
+    # contains holes, which is worth reporting rather than discarding.
+    proof_status = split_status_line(out)
     drop_if_empty(out)
-    record("elaborate", stem, cmd, ev, sg, start, wall)
+    record("elaborate", stem, cmd, ev, sg, start, wall, proof_status=proof_status)
     return True
 
 
@@ -318,7 +342,7 @@ def task_elaborate():
 def do_translate_small(stem: str) -> bool:
     out = SMALL / f"{stem}.lp"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--no-elab", "-i",
+    cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     drop_if_empty(out)
@@ -327,12 +351,17 @@ def do_translate_small(stem: str) -> bool:
 
 
 def do_translate_large(stem: str) -> bool:
-    outdir = LARGE / stem
-    outdir.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--no-elab", "-i",
-           str(ALETHE / f"{stem}.elab"), str(problem_for(stem)),
-           "-n", SEGMENT_SIZE, "-o", str(outdir)]
-    ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT)
+    # carcara 1.1 dropped `-n <segment>` / `-o <dir>`, so a large proof is no
+    # longer split into a directory of segments with a generated Makefile.  It
+    # produces one .lp like any other and is checked directly instead of with
+    # `make -j`.  The small/large split is kept only because the reporting
+    # (and collects.py) separates the two.
+    out = LARGE / f"{stem}.lp"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
+           str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
+    ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
+    drop_if_empty(out)
     record("translate_large", stem, cmd, ev, sg, start, wall)
     return True
 
@@ -380,19 +409,36 @@ def _hyperfine(stem: str, stage: str, inner: str, cwd: Path,
 
 def do_check_small(stem: str) -> bool:
     return _hyperfine(stem, "lambdapi_small_check",
-                      f"lambdapi check -w -v0 {shlex.quote(stem + '.lp')}",
+                      f"lambdapi check -w -v 0 {shlex.quote(stem + '.lp')}",
                       cwd=SMALL, warmup="3", max_runs=MAX_RUNS_SMALL)
 
 
 def do_check_large(stem: str) -> bool:
     return _hyperfine(stem, "lambdapi_large_check",
-                      f"make -j -C {shlex.quote(stem)}",
+                      f"lambdapi check -w -v 0 {shlex.quote(stem + '.lp')}",
                       cwd=LARGE, warmup="0", max_runs=MAX_RUNS_LARGE)
+
+
+def ensure_lambdapi_pkg(d: Path) -> None:
+    """`lambdapi check` refuses a file that is not under a package root:
+    "cannot be mapped under the library root".  check-lp.sh cds into the
+    convert dirs but never puts a package file there, so drop the repo's
+    lambdapi.pkg in alongside the generated proofs."""
+    pkg = d / "lambdapi.pkg"
+    if pkg.exists():
+        return
+    d.mkdir(parents=True, exist_ok=True)
+    src = SCRIPT_DIR / "lambdapi.pkg"
+    pkg.write_text(src.read_text() if src.exists()
+                   else "package_name = bench\nroot_path = bench\n")
 
 
 @create_after(executed="translate", target_regex=r".*/status/lambdapi_.*\.json")
 def task_check():
-    """hyperfine around `lambdapi check` (small) or `make -j` (large)."""
+    """hyperfine around `lambdapi check`, for small and large proofs alike."""
+    for d in (SMALL, LARGE):
+        ensure_lambdapi_pkg(d)
+
     for lp in sorted(SMALL.rglob("*.lp")):
         stem = str(lp.relative_to(SMALL).with_suffix(""))
         yield {
@@ -403,12 +449,12 @@ def task_check():
             "clean": True,
         }
 
-    for d in sorted(_leaf_dirs(LARGE)):
-        stem = str(d.relative_to(LARGE))
+    for lp in sorted(LARGE.rglob("*.lp")):
+        stem = str(lp.relative_to(LARGE).with_suffix(""))
         yield {
             "name": f"large/{stem}",
             "actions": [(do_check_large, [stem])],
-            "file_dep": [str(p) for p in sorted(d.iterdir()) if p.is_file()],
+            "file_dep": [str(lp)],
             "targets": [str(status_path("lambdapi_large_check", stem))],
             "clean": True,
         }
