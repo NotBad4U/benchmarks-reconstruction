@@ -1,0 +1,25 @@
+# Project dependencies.  Install into a local venv, never globally:
+#
+#     python3 -m venv .venv
+#     ./.venv/bin/pip install -r requirements.txt
+#
+# .venv/ is already covered by .gitignore.
+
+# --- pipeline harness (dodo.py) ---
+doit>=0.36
+
+# --- analysis scripts ---
+numpy>=1.26           # results.py
+pandas>=2.0           # parselogs.py, jobres.py
+tabulate>=0.9         # results.py, jobres.py
+python-dateutil>=2.8  # joblog.py
+
+# Non-Python tools the pipeline shells out to (install separately, see
+# install.sh / check-setup.sh): cvc5, carcara, lambdapi, hyperfine.
+# GNU parallel, fd and ripgrep are no longer needed by dodo.py; the legacy
+# shell scripts still use them.
+#
+# NOT listed on purpose: BenchExec.  runexec is Linux-only (it imports
+# libc.so.6 and needs cgroup v2), so it cannot run on macOS.  The runexec
+# variant of this pipeline is kept on the `v2` branch if a Linux host ever
+# turns up again.
