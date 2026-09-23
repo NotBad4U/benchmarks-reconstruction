@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
-mkdir -p benchs
-pushd benchs > /dev/null
-
-#!/bin/sh
+# Download SMT-LIB benchmark sets.
+#
+#   ./download_benchs.sh              # QF_UF and UF (the default set)
+#   ./download_benchs.sh LIA UF       # pick explicitly
+#   BENCHS_DIR=$HOME/benchs ./download_benchs.sh
 set -eu
+
+BENCHS_DIR="${BENCHS_DIR:-benchs}"
+mkdir -p "$BENCHS_DIR"
+pushd "$BENCHS_DIR" > /dev/null
 
 url_for() {
   case "$1" in
@@ -16,8 +21,9 @@ url_for() {
   esac
 }
 
-# Use all sets by default; or pass names as args, e.g. ./script.sh LIA UF
-TARGETS="${*:-LIA QF_UFLIA UFLIA QF_UF UF}"
+# Default to the two sets the benchmark actually runs on.  The others
+# (LIA, QF_UFLIA, UFLIA) are still available by name.
+TARGETS="${*:-QF_UF UF}"
 
 for name in $TARGETS; do
   archive="${name}.tar.zst"
@@ -63,27 +69,30 @@ for name in $TARGETS; do
   echo "✓ Ready: $name"
 done
 
-case "$(uname -s)" in
-  Darwin) fd -t f -x sed -i '' 's/\$/_/g' {} ;;  # macOS
-  *)      fd -t f -x sed -i 's/\$/_/g' {} ;;     # Linux/others
-esac
+# --- normalise symbols the downstream tools cannot handle --------------------
+# The cluster has no `fd`, so fall back to `find`.  And GNU sed (Linux) takes
+# `-i` with no argument while BSD sed (macOS) requires `-i ''`, so pick once.
+if command -v fd > /dev/null 2>&1; then
+  list_files() { fd -t f -0; }
+else
+  list_files() { find . -type f -print0; }
+fi
 
-# Fix CLEARSY benchmarks that use reserved 'apply' symbol
-case "$(uname -s)" in
-  Darwin) fd -t f -x sed -i '' -E 's/(declare-fun[[:space:]]+)apply/\1_apply/g' {} ;;  # macOS
-  *)      fd -t f -x sed -i -E 's/(declare-fun[[:space:]]+)apply/\1_apply/g' {} ;;     # Linux/others
-esac
-case "$(uname -s)" in
-  Darwin) fd -t f -x sed -i '' -E 's/\|([-+*])i\|/|i\1|/g' {} ;;  # macOS
-  *)      fd -t f -x sed -i -E 's/\|([-+*])i\|/|i\1|/g' {} ;;     # Linux/others
-esac
-case "$(uname -s)" in
-  Darwin) fd -t f -x sed -i '' -E 's/\|([-+*])r\|/|r\1|/g' {} ;;  # macOS
-  *)      fd -t f -x sed -i -E 's/\|([-+*])r\|/|r\1|/g' {} ;;     # Linux/others
-esac
-case "$(uname -s)" in
-  Darwin) fd -t f -x sed -i '' -E 's/\|([-+*])f\|/|f\1|/g' {} ;;  # macOS
-  *)      fd -t f -x sed -i -E 's/\|([-+*])f\|/|f\1|/g' {} ;;     # Linux/others
-esac
+if sed --version > /dev/null 2>&1; then
+  SED_INPLACE=(-i -E)        # GNU
+else
+  SED_INPLACE=(-i '' -E)     # BSD / macOS
+fi
+
+rewrite() {
+  echo "-> rewriting: $1"
+  list_files | xargs -0 -n 200 sed "${SED_INPLACE[@]}" "$1"
+}
+
+rewrite 's/\$/_/g'
+rewrite 's/(declare-fun[[:space:]]+)apply/\1_apply/g'   # `apply` is reserved
+rewrite 's/\|([-+*])i\|/|i\1|/g'
+rewrite 's/\|([-+*])r\|/|r\1|/g'
+rewrite 's/\|([-+*])f\|/|f\1|/g'
 
 popd > /dev/null

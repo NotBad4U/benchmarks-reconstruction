@@ -1,0 +1,150 @@
+#!/bin/bash
+#SBATCH --job-name=proof-bench
+#SBATCH --output=proof-bench-%j.out
+#SBATCH --error=proof-bench-%j.err
+#SBATCH --time=2-00:00:00
+#SBATCH --cpus-per-task=32
+#SBATCH --mem=64G
+#SBATCH --partition=cores,cores_any
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=alecol@itu.dk
+#
+# Run the proof-reconstruction pipeline and copy the results into $HOME.
+#
+#   sbatch slurm/benchmark.job              # QF_UF + UF (everything downloaded)
+#   sbatch slurm/benchmark.job QF_UF        # one logic only
+#
+# Requires slurm/setup.job to have run once.
+#
+# Both `cores` and `cores_any` are requested because the ITU docs say so
+# explicitly: cores_any is spare cores on the GPU nodes, and asking for both
+# roughly doubles the set of nodes that can start this job.
+
+set -euo pipefail
+
+# ---------------------------------------------------------------------------
+# Toolchain built by setup.job
+# ---------------------------------------------------------------------------
+PREFIX="$HOME/bench-toolchain"
+if [ ! -f "$PREFIX/env.sh" ]; then
+  echo "ERROR: $PREFIX/env.sh missing -- run 'sbatch slurm/setup.job' first." >&2
+  exit 1
+fi
+# shellcheck disable=SC1091
+source "$PREFIX/env.sh"
+
+for b in cvc5 carcara lambdapi; do
+  command -v "$b" >/dev/null || { echo "ERROR: $b not on PATH" >&2; exit 1; }
+done
+
+# ---------------------------------------------------------------------------
+# Which benchmarks
+# ---------------------------------------------------------------------------
+# No argument -> everything under $BENCHS_ROOT, which setup.job populated with
+# QF_UF and UF.  An argument picks one subdirectory.
+SUBSET="${1:-}"
+BENCH_DIR="${BENCHS_ROOT}${SUBSET:+/$SUBSET}"
+[ -d "$BENCH_DIR" ] || { echo "ERROR: no such benchmark dir: $BENCH_DIR" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Work on node-local scratch, not in $HOME
+# ---------------------------------------------------------------------------
+# The pipeline writes one .proof, one .elab and one .lp per benchmark -- tens
+# of thousands of small files.  $HOME is on a separate server with no
+# infiniband link (per the ITU docs), so doing that there is painfully slow.
+# Work locally, copy only the results back at the end.
+for candidate in "/scratch/$USER" "${TMPDIR:-}" "/tmp/$USER"; do
+  [ -n "$candidate" ] || continue
+  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ]; then
+    SCRATCH_ROOT="$candidate"; break
+  fi
+done
+: "${SCRATCH_ROOT:?no writable scratch directory found}"
+JOB_DIR="$SCRATCH_ROOT/proof-bench-$SLURM_JOB_ID"
+mkdir -p "$JOB_DIR"
+# Deliberately no EXIT trap: if the pipeline dies, the scratch dir is the only
+# evidence. It is removed at the end of a successful run instead.
+trap 'echo "job failed -- scratch kept at $JOB_DIR" >&2' ERR
+
+echo "=== node       : $(hostname)"
+echo "=== cores      : ${SLURM_CPUS_PER_TASK:-1}"
+echo "=== benchmarks : $BENCH_DIR ($(find "$BENCH_DIR" -name '*.smt2' | wc -l) files)"
+echo "=== scratch    : $JOB_DIR"
+
+# ---------------------------------------------------------------------------
+# Python environment
+# ---------------------------------------------------------------------------
+module load Python/3.12.3-GCCcore-13.3.0
+python -m venv "$JOB_DIR/venv"
+# shellcheck disable=SC1091
+source "$JOB_DIR/venv/bin/activate"
+pip install --upgrade pip --quiet
+pip install --no-cache-dir --quiet -r "$SLURM_SUBMIT_DIR/requirements.txt"
+
+cd "$SLURM_SUBMIT_DIR"
+
+# ---------------------------------------------------------------------------
+# Run the pipeline
+# ---------------------------------------------------------------------------
+export BENCH_DIR JOB_DIR
+# dsl-rewrite makes cvc5 emit rare_rewrite steps that carcara can only check
+# with a RARE database (--rare-file), which we do not ship: with it, every
+# elaboration fails.  theory-rewrite is the setting verified end to end.
+export PROOF_GRANULARITY="${PROOF_GRANULARITY:-theory-rewrite}"
+
+NPROC="${SLURM_CPUS_PER_TASK:-8}"
+
+echo "=== stages 0-2 (proof generation, elaboration, translation) ==="
+# Throughput matters here and nothing is being timed for publication, so use
+# every core.
+doit -n "$NPROC" --parallel-type thread translate
+
+echo "=== stage 3 (lambdapi check) ==="
+# Serial on purpose.  hyperfine times these, and a timing taken while 31 other
+# checks fight for the same cores is not worth reporting.  This is the one
+# stage whose numbers end up in the results.
+doit -n 1 check
+
+echo "=== aggregate ==="
+doit joblogs
+
+# ---------------------------------------------------------------------------
+# Copy results into $HOME
+# ---------------------------------------------------------------------------
+# Only the light artifacts: status records, joblogs, hyperfine JSON, summary.
+# proofs/, run/alethe/ and run/convert/ are the bulk and are reproducible.
+OUT="$HOME/benchmark-results/$SLURM_JOB_ID"
+mkdir -p "$OUT"
+
+for d in status logs run/results; do
+  if [ -d "$JOB_DIR/$d" ]; then
+    mkdir -p "$OUT/$(dirname "$d")"
+    cp -r "$JOB_DIR/$d" "$OUT/$(dirname "$d")/"
+  fi
+done
+cp "$JOB_DIR/job_id.txt" "$OUT/" 2>/dev/null || true
+
+# A machine-readable summary next to the raw records.
+python collects.py "$JOB_DIR" --csv "$OUT/summary.csv" > "$OUT/summary.txt" 2>&1 || true
+
+cat > "$OUT/run-info.txt" <<EOF
+slurm_job_id    : $SLURM_JOB_ID
+node            : $(hostname)
+partition       : ${SLURM_JOB_PARTITION:-?}
+cores           : ${SLURM_CPUS_PER_TASK:-?}
+benchmark_dir   : $BENCH_DIR
+proof_granularity: $PROOF_GRANULARITY
+started         : $(date -Iseconds)
+cvc5            : $(cvc5 --version | head -1)
+carcara         : $(carcara --version)
+lambdapi        : $(lambdapi --version 2>&1 | head -1)
+EOF
+
+tar -czf "$HOME/benchmark-results/$SLURM_JOB_ID.tar.gz" -C "$HOME/benchmark-results" "$SLURM_JOB_ID"
+
+rm -rf "$JOB_DIR"
+
+echo "=== done ==="
+echo "results   : $OUT"
+echo "tarball   : $HOME/benchmark-results/$SLURM_JOB_ID.tar.gz"
+du -sh "$OUT"

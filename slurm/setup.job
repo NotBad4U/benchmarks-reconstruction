@@ -1,0 +1,150 @@
+#!/bin/bash
+#SBATCH --job-name=bench-setup
+#SBATCH --output=bench-setup-%j.out
+#SBATCH --error=bench-setup-%j.err
+#SBATCH --time=08:00:00
+#SBATCH --cpus-per-task=16
+#SBATCH --mem=32G
+#SBATCH --partition=scavenge
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=alecol@itu.dk
+#
+# One-off: build the toolchain into $HOME and download the benchmarks.
+# Run this once; benchmark.job then just uses what this produced.
+#
+#   sbatch slurm/setup.job
+#
+# Built here rather than on the login node because ITU restricts accounts that
+# run work there, and because the home directory has no infiniband link, so
+# downloads and extraction are slow enough to want a compute node.
+# scavenge is the right queue for this: low priority, and a build does not
+# need a reserved high-performance node.
+
+set -euo pipefail
+
+PREFIX="$HOME/bench-toolchain"
+BENCHS="$HOME/benchs"
+export TMPDIR="${TMPDIR:-$HOME/tmp}"
+mkdir -p "$PREFIX/bin" "$TMPDIR" "$BENCHS"
+
+echo "=== node: $(hostname)  cores: ${SLURM_CPUS_PER_TASK:-1} ==="
+JOBS="${SLURM_CPUS_PER_TASK:-4}"
+
+# ---------------------------------------------------------------------------
+# 1. cvc5
+# ---------------------------------------------------------------------------
+# NOTE: cvc5 is NOT on conda-forge (checked), and there is no cvc5 module at
+# ITU as far as the docs go -- `module spider cvc5` below will say so.  The
+# upstream project publishes a static Linux binary, which needs no build and
+# no shared libraries, so that is what we use.  Change CVC5_VERSION to pin.
+CVC5_VERSION="${CVC5_VERSION:-1.4.0}"
+if module spider cvc5 2>&1 | grep -qi "error\|not found"; then
+  echo "--- no cvc5 module, installing the upstream static build ---"
+fi
+if [ ! -x "$PREFIX/bin/cvc5" ]; then
+  cd "$TMPDIR"
+  ZIP="cvc5-Linux-x86_64-static-gpl.zip"
+  curl -fL --retry 3 -o "$ZIP" \
+    "https://github.com/cvc5/cvc5/releases/download/cvc5-${CVC5_VERSION}/${ZIP}"
+  rm -rf cvc5-unpack && mkdir cvc5-unpack && cd cvc5-unpack
+  unzip -q "../$ZIP"
+  find . -name cvc5 -type f -perm -u+x -exec cp {} "$PREFIX/bin/cvc5" \;
+  chmod +x "$PREFIX/bin/cvc5"
+  cd "$TMPDIR" && rm -rf cvc5-unpack "$ZIP"
+fi
+"$PREFIX/bin/cvc5" --version | head -1
+
+# ---------------------------------------------------------------------------
+# 2. Rust + carcara (NotBad4U/carcara, branch lambdapi-refactor)
+# ---------------------------------------------------------------------------
+# carcara's Cargo.toml declares edition 2024 / rust-version 1.93, which is
+# newer than most site-provided Rust modules, so install a private toolchain.
+export RUSTUP_HOME="$PREFIX/rustup" CARGO_HOME="$PREFIX/cargo"
+if [ ! -x "$CARGO_HOME/bin/cargo" ]; then
+  echo "--- installing rustup ---"
+  curl -fsSL https://sh.rustup.rs | sh -s -- -y --no-modify-path --profile minimal
+fi
+export PATH="$CARGO_HOME/bin:$PATH"
+rustup update stable
+rustc --version
+
+if [ ! -x "$PREFIX/bin/carcara" ]; then
+  echo "--- building carcara ---"
+  cargo install \
+    --git https://github.com/NotBad4U/carcara \
+    --branch lambdapi-refactor \
+    --root "$PREFIX" --jobs "$JOBS" --force
+fi
+"$PREFIX/bin/carcara" --version
+
+# ---------------------------------------------------------------------------
+# 3. opam + OCaml + lambdapi (deducteam/lambdapi, master)
+# ---------------------------------------------------------------------------
+# opam is not installed on the cluster, so fetch the single static opam binary
+# and build a private switch.  --disable-sandboxing is REQUIRED: opam's
+# sandbox uses bubblewrap/user namespaces, which are restricted on most HPC
+# nodes, and without this flag every package build fails.
+export OPAMROOT="$PREFIX/opam"
+OCAML_VERSION="${OCAML_VERSION:-5.2.0}"
+if [ ! -x "$PREFIX/bin/opam" ]; then
+  echo "--- installing opam ---"
+  curl -fsSL https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh \
+    | sh -s "$PREFIX/bin" --no-backup
+fi
+export PATH="$PREFIX/bin:$PATH"
+opam --version
+
+if [ ! -d "$OPAMROOT" ]; then
+  opam init --bare --disable-sandboxing --no-setup --yes
+fi
+if ! opam switch list --short | grep -qx "$OCAML_VERSION"; then
+  echo "--- building OCaml $OCAML_VERSION (slow, ~15 min) ---"
+  opam switch create "$OCAML_VERSION" --yes
+fi
+eval "$(opam env --switch="$OCAML_VERSION" --set-switch)"
+ocaml -version
+
+echo "--- building lambdapi from master ---"
+opam pin add lambdapi https://github.com/deducteam/lambdapi.git#master --yes
+lambdapi --version || true
+
+# ---------------------------------------------------------------------------
+# 4. lambdapi-stdlib (NotBad4U/lambdapi-stdlib) -- provides alethe.core etc.
+# ---------------------------------------------------------------------------
+# Without this, `lambdapi check` fails with
+#   File ".../lib_root/alethe/core.lp" (or .dk) not found
+if [ ! -d "$PREFIX/src/lambdapi-stdlib" ]; then
+  mkdir -p "$PREFIX/src"
+  git clone https://github.com/NotBad4U/lambdapi-stdlib "$PREFIX/src/lambdapi-stdlib"
+fi
+cd "$PREFIX/src/lambdapi-stdlib"
+git pull --ff-only || true
+make install
+
+# ---------------------------------------------------------------------------
+# 5. Benchmarks (QF_UF and UF by default)
+# ---------------------------------------------------------------------------
+cd "$SLURM_SUBMIT_DIR"
+BENCHS_DIR="$BENCHS" bash download_benchs.sh
+du -sh "$BENCHS"/* 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# 6. Write the environment file benchmark.job sources
+# ---------------------------------------------------------------------------
+cat > "$PREFIX/env.sh" <<EOF
+# generated by slurm/setup.job on $(date -Iseconds)
+export PREFIX="$PREFIX"
+export RUSTUP_HOME="$PREFIX/rustup"
+export CARGO_HOME="$PREFIX/cargo"
+export OPAMROOT="$PREFIX/opam"
+export PATH="$PREFIX/bin:$PREFIX/cargo/bin:\$PATH"
+eval "\$(opam env --switch=$OCAML_VERSION --set-switch 2>/dev/null)" || true
+export BENCHS_ROOT="$BENCHS"
+EOF
+
+echo "=== setup complete ==="
+echo "toolchain : $PREFIX"
+echo "benchmarks: $BENCHS"
+for b in cvc5 carcara lambdapi; do
+  printf "  %-10s %s\n" "$b" "$(command -v $b || echo MISSING)"
+done
