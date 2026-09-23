@@ -33,8 +33,8 @@ JOBS="${SLURM_CPUS_PER_TASK:-4}"
 # ---------------------------------------------------------------------------
 # 1. cvc5
 # ---------------------------------------------------------------------------
-# NOTE: cvc5 is NOT on conda-forge (checked), and there is no cvc5 module at
-# ITU as far as the docs go -- `module spider cvc5` below will say so.  The
+# NOTE: cvc5 is NOT on conda-forge (the package does not exist), and there is
+# no cvc5 module at ITU -- both checked, `module spider cvc5` finds nothing.  The
 # upstream project publishes a static Linux binary, which needs no build and
 # no shared libraries, so that is what we use.  Change CVC5_VERSION to pin.
 CVC5_VERSION="${CVC5_VERSION:-1.4.0}"
