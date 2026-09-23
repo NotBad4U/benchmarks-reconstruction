@@ -19,6 +19,12 @@
 # Both `cores` and `cores_any` are requested because the ITU docs say so
 # explicitly: cores_any is spare cores on the GPU nodes, and asking for both
 # roughly doubles the set of nodes that can start this job.
+#
+# 32 cores / 64 GB is deliberate. Per sinfo, `cores` nodes have 40+ cores and
+# `cores_any` nodes have 32+, so 32 is the largest request that still fits
+# every node in both partitions -- asking for 40 would exclude the nine
+# cores_any nodes and buy 25% more cores at the cost of a longer wait. Both
+# partitions have 120 GB+, so memory is not the binding constraint.
 
 set -euo pipefail
 

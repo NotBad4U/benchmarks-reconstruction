@@ -54,8 +54,12 @@ that flag every package build fails.
 ## 2. Smoke test before committing 2 days of wall time
 
 ```bash
-sbatch --time=00:30:00 --cpus-per-task=8 --partition=scavenge slurm/benchmark.job QF_UF/eq_diamond
+sbatch --time=00:30:00 --cpus-per-task=8 --mem=16G --partition=scavenge slurm/benchmark.job QF_UF/eq_diamond
 ```
+
+`--mem=16G` is not optional here: the script defaults to 64 GB, but the
+smallest `scavenge` nodes have only ~30 GB, so without the override the job
+would sit pending forever waiting for a node that can satisfy it.
 
 That is 100 benchmarks and takes about a minute of compute once it starts. If
 it produces `~/benchmark-results/<jobid>/summary.txt`, the pipeline works.
@@ -116,27 +120,38 @@ files.
 
 ## Can we get a bigger machine?
 
-From the ITU docs:
+Measured on the cluster with `sinfo` (the published docs are out of date — they
+list `cores` as cn[8,14-15], but it is actually six nodes):
 
-| partition | nodes | wall time |
-|---|---|---|
-| `cores` | cn[8,14-15] | 3 days (students) / **7 days (researchers)** |
-| `cores_any` | cn[3-4,6-7,12,16-18] | 3 / 7 days |
-| `acltr` | cn[3-7,12-13,18] | 3 / 7 days — GPU nodes, irrelevant here |
-| `scavenge` | all nodes | 1 day, low priority |
-| `dgpu` | desktop[1-9] | 10 days |
+| partition | nodes | cores | memory | node list |
+|---|---|---|---|---|
+| `cores` | 6 | **40+** | 120 GB+ | cn[8,14-18] |
+| `cores_any` | 9 | 32+ | **190 GB+** | cn[3-7,12,16-18] |
+| `acltr` | 10 | 32+ | 128 GB+ | cn[3-7,12-13,16-18] |
+| `scavenge` | 23 | 8+ | 30 GB+ | cn[3-19], desktop[1,6-8,12,15] |
+| `dgx1` / `asus1` | 1 each | 20 | 115 GB | — |
 
-**The docs do not publish per-node core counts or RAM**, so I could not size the
-job from them. Check on the cluster:
+`+` is a minimum: the partition contains nodes with at least that much.
+
+**The job asks for 32 cores and 64 GB on purpose.** 32 is the largest request
+that still fits every node in *both* `cores` and `cores_any`; asking for 40
+would fit `cores` but exclude the nine `cores_any` nodes, so you would wait
+longer for 25% more cores. On a two-day job that is a bad trade. If the queue
+is empty and you want the bigger nodes:
 
 ```bash
-sinfo -o "%20P %8D %6c %10m %N"
+sbatch --cpus-per-task=40 --partition=cores slurm/benchmark.job
 ```
 
-`%c` is cores per node and `%m` is memory in MB. Raise `--cpus-per-task` and
-`--mem` in `benchmark.job` to match the largest node you can actually get; this
-pipeline is embarrassingly parallel, so cores translate almost linearly into
-throughput for stages 0–2.
+Memory is not the constraint — every node in both partitions has 120 GB+, and
+64 GB across 32 concurrent tasks is 2 GB each, well beyond what cvc5 and
+carcara need on these benchmarks. Raise it only if a run reports OOM.
+
+To see individual nodes rather than partition minima:
+
+```bash
+sinfo -N -o "%N %c %m" | sort -u
+```
 
 Other levers, in order of effort:
 
@@ -153,8 +168,8 @@ Other levers, in order of effort:
 
 ## Things most likely to break
 
-1. **`module load Python/3.12.3-GCCcore-13.3.0`** — taken from your scraper job.
-   If it fails, `module spider Python`.
+1. ~~`module load Python/3.12.3-GCCcore-13.3.0`~~ — confirmed present on the
+   cluster. (3.13.1 is also available if you want it.)
 2. **`/scratch` may not exist**, or not be writable. The job falls back to
    `$TMPDIR` then `/tmp/$USER`, and prints which it picked.
 3. **`opam switch create 5.2.0`** builds OCaml from source, ~15 minutes. If
