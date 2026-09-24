@@ -45,6 +45,7 @@ It installs into `$HOME/bench-toolchain`:
 | carcara | `cargo install --git … --branch lambdapi-refactor` | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
 | OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` master | opam is not installed on the cluster, so the job fetches the opam binary itself |
 | lambdapi-stdlib | `make install` from `NotBad4U/lambdapi-stdlib` | provides `alethe.core` — without it every `lambdapi check` fails |
+| hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
 | QF_UF + UF | `download_benchs.sh` | now the default set (it used to fetch all five) |
 
 `opam init` is run with **`--disable-sandboxing`**. opam's sandbox uses

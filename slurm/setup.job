@@ -77,6 +77,14 @@ if [ ! -x "$PREFIX/bin/carcara" ]; then
 fi
 "$PREFIX/bin/carcara" --version
 
+# hyperfine times stage 3 -- the one stage whose numbers get reported.  Not on
+# the cluster, and cargo is already here, so build it alongside carcara.
+if [ ! -x "$PREFIX/bin/hyperfine" ]; then
+  echo "--- building hyperfine ---"
+  cargo install hyperfine --locked --root "$PREFIX" --jobs "$JOBS"
+fi
+"$PREFIX/bin/hyperfine" --version
+
 # ---------------------------------------------------------------------------
 # 3. opam + OCaml + lambdapi (deducteam/lambdapi, master)
 # ---------------------------------------------------------------------------
@@ -145,6 +153,6 @@ EOF
 echo "=== setup complete ==="
 echo "toolchain : $PREFIX"
 echo "benchmarks: $BENCHS"
-for b in cvc5 carcara lambdapi; do
+for b in cvc5 carcara lambdapi hyperfine; do
   printf "  %-10s %s\n" "$b" "$(command -v $b || echo MISSING)"
 done

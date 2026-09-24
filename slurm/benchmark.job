@@ -39,7 +39,7 @@ fi
 # shellcheck disable=SC1091
 source "$PREFIX/env.sh"
 
-for b in cvc5 carcara lambdapi; do
+for b in cvc5 carcara lambdapi hyperfine; do
   command -v "$b" >/dev/null || { echo "ERROR: $b not on PATH" >&2; exit 1; }
 done
 
@@ -144,6 +144,7 @@ started         : $(date -Iseconds)
 cvc5            : $(cvc5 --version | head -1)
 carcara         : $(carcara --version)
 lambdapi        : $(lambdapi --version 2>&1 | head -1)
+hyperfine       : $(hyperfine --version)
 EOF
 
 tar -czf "$HOME/benchmark-results/$SLURM_JOB_ID.tar.gz" -C "$HOME/benchmark-results" "$SLURM_JOB_ID"

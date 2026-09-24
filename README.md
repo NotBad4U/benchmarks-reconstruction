@@ -1,246 +1,92 @@
-# SMT Alethe proof-reconstruction benchmark — README
+# SMT Alethe proof-reconstruction benchmark
 
-Overview
---------
-This repository implements a multi-stage pipeline to generate, clean, elaborate and translate SMT proofs, then run Lambdapi checks / benchmarks and collect results.
+Generates SMT proofs with cvc5, elaborates and translates them to Lambdapi with
+carcara, checks them with Lambdapi, and records timings and outcomes.
 
-Pipeline stages
-- gen-proof.sh   : run cvc5 on SMT benchmarks and produce `.proof` files
-- clean-proof.sh : remove empty proof files i.e. return `unsant` but do not provide the proof 
-- elaborate.sh   : run `carcara check` + `carcara elaborate` to produce `.elab` (Alethe) files
-- translate.sh   : translate `.elab` → `.lp` (Lambdapi); split outputs in `convert/small` and `convert/large` by size
-- check-lp.sh    : run lambdapi checks / benchmarks (produces `run/results` and logs)
-- jobs.py        : orchestrator that creates a job directory (UUID) under `output/` (by default), runs the above scripts and manages env injection
-- utils / parsers: scripts to parse logs and aggregate results (results.py, parselogs.py, jobres.py)
-
-The pipeline is modular: each stage (proof generation, cleaning, elaboration, translation, and Lambdapi checks) can be run independently, end to end, or in any subset you need. However, jobs.py serves as the orchestrator that ties these steps together—creating the job workspace, wiring environment variables, and invoking the shell scripts in order. It’s implemented in Python to make configuration straightforward (e.g., via config.env and command-line flags like --max-stage), so you can adjust timeouts, thresholds, and stopping points without touching the underlying scripts.
-
-Stage map (for `--max-stage`)
-- `0` → generate proofs only
-- `1` → + elaborate
-- `2` → + translate
-- `3` → + Lambdapi check (full pipeline; default if `--max-stage` is omitted)
-
-Required tools
-- cvc5
-- carcara
-- lambdapi
-- GNU parallel
-- fd (fd-find)
-- rg (ripgrep)
-- hyperfine (used for benchnmark)
-- Python 3 (for orchestrator and parsing utilities)
-Notes:
-- On some Linux distributions `fd` is packaged as `fd-find` and the binary is `fdfind`. Either install `fd` or create an `fd` wrapper/alias.
-- All scripts assume the required binaries are on PATH. Use `check-setup.sh` to validate dependencies.
-
-Installation (macOS / Homebrew example)
-```bash
-brew install cvc5 carcara lambdapi parallel fd ripgrep hyperfine
-# if fd is fdfind on your system:
-# ln -s "$(which fdfind)" /usr/local/bin/fd
+```
+benchs/<LOGIC>/<BENCH>/x.smt2
+   │
+   ├─► cvc5 ─────────────► proofs/x.proof
+   │                          │
+   ├─► carcara elaborate ◄────┘ ──► run/alethe/x.elab
+   │                                   │
+   └─► carcara translate ◄─────────────┘ ──► run/convert/{small,large}/x.lp
+                                                │
+                              hyperfine → lambdapi check ──► run/results/x.json
 ```
 
-Configuration
--------------
-Edit `config.env` to tune timeouts and split thresholds. Example recommended content (exported so scripts can source it directly):
-```bash
-export CVC5_TIMEOUT=600
-export CARCARA_CHECK_ELAB_TIMEOUT=60
-export CARCARA_TRANSLATE_TIMEOUT=60
-export LAMBDAPI_CHECK_TIMEOUT=60
-export PROOF_SPLIT_LIMIT=1M   # fd size threshold (e.g. 1M, 500K)
-export SEGMENT_SIZE=2000
-```
-How the env is consumed
-- jobs.py contains a loader that reads `config.env` and injects values into `os.environ` so subprocesses inherit them.
-- Shell scripts can `source` the same `config.env`. If `config.env` uses plain assignments, call:
-  ```bash
-  set -a
-  source /path/to/config.env
-  set +a
-  ```
-  to auto-export the variables.
+The problem file feeds stages 1 and 2 as well as stage 0, which is why this is a
+task graph and not a shell pipe.
 
-Running the pipeline
---------------------
-Recommended (orchestrated) — creates a job dir under `./output/<UUID>` and runs all stages:
-```bash
-# Full pipeline (default: --max-stage 3)
-python3 run_benchmark.py --benchmark-dir /path/to/benchs --output-dir ./output
+## Files
 
-# Stop after proof generation
-python3 run_benchmark.py --benchmark-dir /path/to/benchs --output-dir ./output --max-stage 0
+| file | role |
+|---|---|
+| `dodo.py` | the pipeline, as a [doit](https://pydoit.org) task graph |
+| `config.env` | timeouts, split threshold, hyperfine run counts |
+| `collects.py` | aggregates a job directory into per-stage stats and CSV |
+| `download_benchs.sh` | fetches SMT-LIB sets (QF_UF and UF by default), drops sat/unknown |
+| `lambdapi.pkg` | package file placed next to generated proofs so lambdapi accepts them |
+| `slurm/` | jobs for the ITU HPC cluster — see [`slurm/README.md`](slurm/README.md) |
 
-# Stop after elaboration
-python3 run_benchmark.py --benchmark-dir /path/to/benchs --output-dir ./output --max-stage 1
+## Run locally
 
-# Stop after translation
-python3 run_benchmark.py --benchmark-dir /path/to/benchs --output-dir ./output --max-stage 2
-```
-Manual step-by-step
-1. Create job dir and subdirs:
 ```bash
-JOB_DIR=./output/$(uuidgen)
-mkdir -p "$JOB_DIR"/{proofs,logs,run/alethe,run/convert/small,run/convert/large,run/results}
-```
-2. Generate proofs:
-```bash
-./gen-proof.sh /path/to/benchs "$JOB_DIR"
-```
-3. Clean proofs:
-```bash
-./clean-proof.sh "$JOB_DIR/proofs"
-```
-4. Elaborate:
-```bash
-./elaborate.sh "$JOB_DIR" /path/to/benchs
-```
-5. Translate:
-```bash
-./translate.sh "$JOB_DIR" /path/to/benchs
-```
-6. Run lambdapi checks / benchmarks:
-```bash
-./check-lp.sh "$JOB_DIR"
-```
-7. Parse results:
-```bash
-python3 results.py
-python3 parselogs.py
+python3 -m venv .venv
 ```
 
-Behavior notes and tips
-- PROOF_SPLIT_LIMIT is passed to `fd --size` (e.g. `--size -1M` for files smaller than 1 MiB). Set PROOF_SPLIT_LIMIT in `config.env`.
-- GNU parallel `--timeout` expects a plain number (seconds) or a percentage, do not append `s`.
-- Scripts use `fd` + `parallel` with null-separated output to safely handle whitespace in filenames.
-- jobs.py will load `config.env` into the Python environment so scripts launched via jobs.py inherit the variables.
-- Logs are written to `<job_dir>/logs` (cvc5, elaborate, translate, lambdapi checks).
-- Outputs:
-  - proofs → `<job_dir>/proofs`
-  - alethe elab → `<job_dir>/run/alethe`
-  - converted lambdapi → `<job_dir>/run/convert/{small,large}`
-  - results → `<job_dir>/run/results`
-
-Troubleshooting
----------------
-- Missing tools: run `./check-setup.sh` or install missing packages.
-- If `fd` is named `fdfind` on your system: create a shim `ln -s "$(which fdfind)" /usr/local/bin/fd` or modify scripts to call `fdfind`.
-- If parallel complains about `--timeout`, provide an integer (e.g. `--timeout 60`).
-
-License & contact
------------------
-See repository root for license. For issues or questions, open an issue in the repo.
-
-```# filepath: /Users/alessiocoltellacci/Projects/benchmarks/README.md
-# SMT Alethe proof-reconstruction benchmark — README
-
-Overview
---------
-This repository implements a multi-stage pipeline to generate, clean, elaborate and translate SMT proofs, then run Lambdapi checks / benchmarks and collect results.
-
-Pipeline stages
-- gen-proof.sh   : run cvc5 on SMT benchmarks and produce `.proof` files
-- clean-proof.sh : remove empty / trivial proof files
-- elaborate.sh   : run `carcara check` + `carcara elaborate` to produce `.elab` (Alethe) files
-- translate.sh   : translate `.elab` → `.lp` (Lambdapi); split outputs in `convert/small` and `convert/large` by size
-- check-lp.sh    : run lambdapi checks / benchmarks (produces `run/results` and logs)
-- jobs.py        : orchestrator that creates a job directory (UUID) under `output/`, runs the above scripts and manages env injection
-- utils / parsers: scripts to parse logs and aggregate results (results.py, parselogs.py, jobres.py)
-
-Required tools
-- cvc5
-- carcara
-- lambdapi
-- GNU parallel
-- fd (fd-find)
-- rg (ripgrep)
-- hyperfine (optional — used for timing Lambdapi)
-- Python 3 (for orchestrator and parsing utilities)
-Notes:
-- On some Linux distributions `fd` is packaged as `fd-find` and the binary is `fdfind`. Either install `fd` or create an `fd` wrapper/alias.
-- All scripts assume the required binaries are on PATH. Use `check-setup.sh` to validate dependencies.
-
-Installation (macOS / Homebrew example)
 ```bash
-brew install cvc5 carcara lambdapi parallel fd ripgrep hyperfine
-# if fd is fdfind on your system:
-# ln -s "$(which fdfind)" /usr/local/bin/fd
+./.venv/bin/pip install -r requirements.txt
 ```
 
-Configuration
--------------
-Edit `config.env` (or `timeout.env`) to tune timeouts and split thresholds. Example recommended content (exported so scripts can source it directly):
-```bash
-export CVC5_TIMEOUT=600
-export CARCARA_CHECK_ELAB_TIMEOUT=60
-export CARCARA_TRANSLATE_TIMEOUT=60
-export LAMBDAPI_CHECK_TIMEOUT=60
-export PROOF_SPLIT_LIMIT=1M   # fd size threshold (e.g. 1M, 500K)
-export SEGMENT_SIZE=2000
-```
-How the env is consumed
-- jobs.py contains a loader that reads `config.env` and injects values into `os.environ` so subprocesses inherit them.
-- Shell scripts can `source` the same `config.env`. If `config.env` uses plain assignments, call:
-  ```bash
-  set -a
-  source /path/to/config.env
-  set +a
-  ```
-  to auto-export the variables.
+`doit` is the only Python dependency. You also need `cvc5`, `carcara`
+(`NotBad4U/carcara`, branch `lambdapi-refactor`), `lambdapi` with
+`NotBad4U/lambdapi-stdlib` installed, and `hyperfine` on `PATH`.
 
-Running the pipeline
---------------------
-Recommended (orchestrated) — creates a job dir under `./output/<UUID>` and runs all stages:
 ```bash
-python3 jobs.py --benchmark-dir /path/to/benchs --output-dir ./output
-```
-In the idea, the pipeline is the following:
-1. Create job dir and subdirs:
-```bash
-JOB_DIR=./output/$(uuidgen)
-mkdir -p "$JOB_DIR"/{proofs,logs,run/alethe,run/convert/small,run/convert/large,run/results}
-```
-2. Generate proofs:
-```bash
-./gen-proof.sh /path/to/benchs "$JOB_DIR"
-```
-3. Clean proofs:
-```bash
-./clean-proof.sh "$JOB_DIR/proofs"
-```
-4. Elaborate:
-```bash
-./elaborate.sh "$JOB_DIR" /path/to/benchs
-```
-5. Translate:
-```bash
-./translate.sh "$JOB_DIR" /path/to/benchs
-```
-6. Run lambdapi checks / benchmarks:
-```bash
-./check-lp.sh "$JOB_DIR"
-```
-7. Parse results:
-```bash
-python3 results.py
-python3 parselogs.py
+./download_benchs.sh
 ```
 
-Behavior notes and tips
-- PROOF_SPLIT_LIMIT is passed to `fd --size` (e.g. `--size -1M` for files smaller than 1 MiB). Set PROOF_SPLIT_LIMIT in `config.env`.
-- GNU parallel `--timeout` expects a plain number (seconds) or a percentage, do not append `s`.
-- Scripts use `fd` + `parallel` with null-separated output to safely handle whitespace in filenames.
-- jobs.py will load `config.env` into the Python environment so scripts launched via jobs.py inherit the variables.
-- Logs are written to `<job_dir>/logs` (cvc5, elaborate, translate, lambdapi checks).
-- Outputs:
-  - proofs → `<job_dir>/proofs`
-  - alethe elab → `<job_dir>/run/alethe`
-  - converted lambdapi → `<job_dir>/run/convert/{small,large}`
-  - results → `<job_dir>/run/results`
+```bash
+BENCH_DIR=benchs/QF_UF JOB_DIR=output/run PROOF_GRANULARITY=theory-rewrite ./.venv/bin/doit -n 8 --parallel-type thread
+```
 
-Troubleshooting
----------------
-- Missing tools: run `./check-setup.sh` or install missing packages.
-- If `fd` is named `fdfind` on your system: create a shim `ln -s "$(which fdfind)" /usr/local/bin/fd` or modify scripts to call `fdfind`.
-- If parallel complains about `--timeout`, provide an integer (e.g. `--timeout 60`).
+`JOB_DIR` must stay the same between invocations: that is what lets a rerun
+resume instead of starting over.
+
+To keep stage-3 timings clean, run the work in parallel and the measurement
+serially:
+
+```bash
+BENCH_DIR=benchs/QF_UF JOB_DIR=output/run ./.venv/bin/doit -n 8 --parallel-type thread translate
+```
+
+```bash
+BENCH_DIR=benchs/QF_UF JOB_DIR=output/run ./.venv/bin/doit -n 1 check
+```
+
+```bash
+./.venv/bin/python collects.py output/run --csv summary.csv
+```
+
+## Output
+
+Every task writes `status/<stage>/<stem>.json` — exit code, signal, runtime and,
+for elaboration, whether the proof still contains holes. That record is the
+doit target, so a tool that fails (timeout, no proof) records the failure
+instead of aborting the run. `logs/*.txt` repeats the records in GNU parallel
+joblog format, which is what `collects.py` reads.
+
+## Known issues
+
+- **`PROOF_GRANULARITY=dsl-rewrite`** (the `config.env` default) makes cvc5
+  emit `rare_rewrite` steps that carcara can only check given a RARE database
+  via `--rare-file`, which is not shipped. Every elaboration then fails. Use
+  `theory-rewrite` until that is resolved.
+- **Every elaborated proof is `holey`.** `-i` turns unknown rules into holes and
+  `translate --admit-unsupported` turns unsupported ones into `admit`, so a
+  passing `lambdapi check` does not by itself mean the proof is complete.
+- **carcara 1.1 no longer segments large proofs** (`-n`/`-o` are gone). Large
+  proofs are one `.lp` checked directly; the small/large split is now only a
+  reporting distinction.
+- `*.smt` files (TLAPS/Allocator) are not picked up; only `*.smt2` is globbed.

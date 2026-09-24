@@ -85,7 +85,6 @@ CVC5_TIMEOUT = float(os.environ.get("CVC5_TIMEOUT", 30))
 ELAB_TIMEOUT = float(os.environ.get("CARCARA_CHECK_ELAB_TIMEOUT", 60))
 TRANSLATE_TIMEOUT = float(os.environ.get("CARCARA_TRANSLATE_TIMEOUT", 60))
 CHECK_TIMEOUT = float(os.environ.get("LAMBDAPI_CHECK_TIMEOUT", 60))
-SEGMENT_SIZE = os.environ.get("SEGMENT_SIZE", "1000")  # unused: carcara 1.1 dropped -n
 TRANSLATE_TARGET = os.environ.get("TRANSLATE_TARGET", "lambdapi")
 # dsl-rewrite makes cvc5 emit `rare_rewrite` steps, which carcara can only
 # check when given the RARE database via --rare-file.  Without that file every
@@ -263,15 +262,22 @@ def do_gen_proof(stem: str) -> bool:
     ]
     ev, sg, start, wall = run_limited(cmd, CVC5_TIMEOUT, stdout_path=out)
 
-    # clean-proof.sh: an empty proof, or one that is just "unsat", means cvc5
-    # answered but produced no proof.  Dropping it here is what keeps it out of
-    # stage 1, exactly as deleting the file does today.
+    # Only an answer of `unsat` followed by a proof body is a proof.  Anything
+    # else must be dropped here or stage 1 picks it up and records it as an
+    # elaboration *error*: cvc5 prints `sat`/`unknown` with exit status 0, so
+    # the exit code alone does not tell them apart.
     dropped = ""
-    if drop_if_empty(out):
+    text = out.read_text(errors="ignore") if out.exists() else ""
+    answer, _, body = text.lstrip().partition("\n")
+    answer = answer.strip()
+    if not text.strip():
         dropped = "empty"
-    elif out.exists() and out.read_text(errors="ignore").strip() == "unsat":
+    elif answer != "unsat":
+        dropped = f"answer:{answer[:32]}"   # sat, unknown, an error message...
+    elif not body.strip():
+        dropped = "unsat-only"              # unsat, but no proof was dumped
+    if dropped and out.exists():
         out.unlink()
-        dropped = "unsat-only"
 
     record("cvc5", stem, cmd, ev, sg, start, wall, dropped=dropped)
     return True  # never fail the task; the record carries the outcome

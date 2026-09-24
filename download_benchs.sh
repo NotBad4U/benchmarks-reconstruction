@@ -69,6 +69,23 @@ for name in $TARGETS; do
   echo "✓ Ready: $name"
 done
 
+# --- keep only benchmarks that can have a proof ------------------------------
+# Folded in from the old clean-benchs.sh, which needed ripgrep (absent on the
+# cluster).  Only `unsat` instances produce a proof to reconstruct; sat and
+# unknown ones would just run cvc5 for nothing.  Done before the rewrites below
+# so those do not waste time on files about to be deleted.
+#
+# `grep --null` rather than `-Z`: on BSD grep (macOS) `-Z` means decompress.
+echo "-> removing StarExec metadata (*.txt)"
+find . -type f -name '*.txt' -delete
+
+before=$(find . -type f | wc -l | tr -d ' ')
+{ grep -rl --null -e 'status sat' -e 'status unknown' . || true; } | xargs -0 rm -f
+find . -type f -empty -delete
+find . -type d -empty -delete
+after=$(find . -type f | wc -l | tr -d ' ')
+echo "-> removed $((before - after)) sat/unknown/empty benchmarks, $after kept"
+
 # --- normalise symbols the downstream tools cannot handle --------------------
 # The cluster has no `fd`, so fall back to `find`.  And GNU sed (Linux) takes
 # `-i` with no argument while BSD sed (macOS) requires `-i ''`, so pick once.
