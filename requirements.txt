@@ -19,6 +19,8 @@ doit-graph>=0.3
 # Non-Python tools dodo.py shells out to: cvc5, carcara, lambdapi, hyperfine.
 # On the ITU cluster, slurm/setup.job builds all of them into $HOME.
 #
-# Not listed on purpose: BenchExec.  runexec is Linux-only (it imports
-# libc.so.6 and needs cgroup v2), so it cannot run on macOS.  The runexec
-# variant of this pipeline is kept on the `v2` branch.
+# `doit report`: BenchExec's table-generator, which turns the status records
+# into a sortable HTML table with quantile and scatter plots.  It is pure Python
+# and works on macOS.  (BenchExec's *runexec* is the Linux-only part -- it loads
+# libc.so.6 and needs cgroup v2 -- and this pipeline does not use it.)
+BenchExec>=3.30

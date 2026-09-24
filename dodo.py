@@ -40,14 +40,17 @@ import contextlib
 import fcntl
 import json
 import os
+import platform
 import re
 import shlex
+import shutil
 import signal
 import socket
 import subprocess
 import sys
 import time
 import uuid
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Iterable, Iterator
 
@@ -668,8 +671,124 @@ def task_joblogs():
     }
 
 
-# NOTE on measurement: hyperfine here runs under whatever concurrency `doit -n`
-# was given, so timings are wall-clock-under-load, same as today.  To fix that
-# without changing anything else, replace run_limited() with a call to
-# BenchExec's `runexec --timelimit N --memlimit M --cores <pinned>`, which
-# measures CPU time and peak RSS per run and pins cores.  Linux only.
+# =========================
+# Report -- BenchExec's table-generator, opened in a browser
+# =========================
+#
+#     doit report          then open  <JOB_DIR>/report/results.table.html
+#
+# One row per benchmark, one column group per stage, sortable and filterable,
+# with quantile ("cactus") and scatter plots.  table-generator is the part of
+# BenchExec that works on macOS: it never loads the Linux-only runexec code.
+# Not a default task: it only reads status records, so run it whenever.
+
+REPORT = JOB_DIR / "report"
+
+# record stage -> column group in the table; small and large share a group
+REPORT_GROUPS = [
+    ("cvc5", "cvc5"),
+    ("elaborate", "elaborate"),
+    ("translate_small", "translate"),
+    ("translate_large", "translate"),
+    ("lambdapi_small_check", "check"),
+    ("lambdapi_large_check", "check"),
+]
+
+
+def _tg_status(rec: dict) -> str:
+    """Our statuses in the vocabulary table-generator colours and counts:
+    it recognises TIMEOUT and OUT OF MEMORY, and ERROR (<code>) keeps a
+    carcara panic (101) distinguishable from an ordinary failure (1)."""
+    st = rec["status"]
+    if st == "success":
+        return "done"
+    if st == "timeout":
+        return "TIMEOUT"
+    if st == "outofmemory":
+        return "OUT OF MEMORY"
+    return f"ERROR ({rec['exitval']})"
+
+
+def _check_seconds(stem: str) -> float | None:
+    """Mean lambdapi time per run, from hyperfine's JSON.  The record's own
+    runtime covers every warmup and repeat, which is not what to plot."""
+    try:
+        res = json.loads((RESULTS / f"{stem}.json").read_text())["results"][0]
+    except (OSError, ValueError, KeyError, IndexError):
+        return None
+    return res["mean"] if all(c == 0 for c in res.get("exit_codes", [1])) else None
+
+
+def _result_xml(group: str, recs: list[dict]) -> ET.ElementTree:
+    now = time.strftime("%Y-%m-%d %H:%M:%S")
+    root = ET.Element("result", name=group, benchmarkname=group, tool=group,
+                      # a real tool-info module: table-generator imports it and
+                      # warns once per run set on anything without a Tool class
+                      toolmodule="benchexec.tools.dummy", version="-",
+                      starttime=now, date=now,
+                      generator="dodo.py")
+    cols = ET.SubElement(root, "columns")
+    for title in ("status", "walltime", "size", "detail"):
+        ET.SubElement(cols, "column", title=title)
+    si = ET.SubElement(root, "systeminfo", hostname=socket.gethostname())
+    ET.SubElement(si, "os", name=platform.platform())
+    ET.SubElement(si, "cpu", cores=str(os.cpu_count() or 0), frequency="0",
+                  model=platform.processor() or "unknown")
+    ET.SubElement(si, "ram", size="0")
+    ET.SubElement(si, "environment")
+    for rec in recs:
+        stem = rec["stem"]
+        run = ET.SubElement(root, "run", name=stem, files=f"[{stem}]")
+        seconds = rec["runtime_seconds"]
+        if rec["_stage"].startswith("lambdapi_") and rec["status"] == "success":
+            seconds = _check_seconds(stem) or seconds
+        detail = rec.get("proof_status") or rec.get("dropped") or ""
+        for title, value in (("status", _tg_status(rec)),
+                             ("walltime", f"{seconds}s"),
+                             ("size", rec["_size"]),
+                             ("detail", detail)):
+            ET.SubElement(run, "column", title=title, value=str(value))
+    return ET.ElementTree(root)
+
+
+def do_report() -> bool:
+    tg = (shutil.which("table-generator", path=str(Path(sys.executable).parent))
+          or shutil.which("table-generator"))
+    if not tg:
+        print("table-generator not found: ./.venv/bin/pip install BenchExec",
+              file=sys.stderr)
+        return False
+
+    groups: dict[str, dict[str, dict]] = {}
+    for stage, group in REPORT_GROUPS:
+        d = STATUS / stage
+        for f in (sorted(d.rglob("*.json")) if d.exists() else []):
+            rec = json.loads(f.read_text())
+            rec["_stage"] = stage
+            rec["_size"] = ("small" if "small" in stage else
+                            "large" if "large" in stage else "")
+            prev = groups.setdefault(group, {}).get(rec["stem"])
+            if prev is None or rec["starttime"] > prev["starttime"]:
+                groups[group][rec["stem"]] = rec   # newest wins
+
+    REPORT.mkdir(parents=True, exist_ok=True)
+    xml_files = []
+    for group in dict.fromkeys(g for _, g in REPORT_GROUPS):
+        if group not in groups:
+            continue
+        out = REPORT / f"{group}.xml"
+        _result_xml(group, sorted(groups[group].values(),
+                                  key=lambda r: r["stem"])).write(
+            out, encoding="utf-8", xml_declaration=True)
+        xml_files.append(str(out))
+
+    subprocess.run([tg, "-q", "-o", str(REPORT), "-n", "results", *xml_files],
+                   check=True)
+    html = REPORT / "results.table.html"
+    print(f"report: {html}")
+    return True
+
+
+def task_report():
+    """BenchExec table-generator page: report/results.table.html"""
+    return {"actions": [do_report], "uptodate": [False], "verbosity": 2}

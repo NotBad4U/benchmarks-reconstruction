@@ -74,6 +74,24 @@ everything, since a proof's size is only known after elaboration. Rerun the
 same `JOB_DIR` without the flag to do the large ones later: the small ones are
 already up to date.
 
+### Viewing the results in a browser
+
+```bash
+./.venv/bin/doit report
+```
+
+```bash
+open output/run/report/results.table.html
+```
+
+That is BenchExec's table-generator: one row per benchmark, one column group
+per stage, sortable and filterable, with quantile ("cactus") and scatter plots.
+Statuses read `done`, `TIMEOUT`, or `ERROR (<exit code>)` — a carcara panic
+shows as `ERROR (101)`. For the check stage, the time shown is hyperfine's
+mean per run, not the whole warmup-and-repeat sequence. The page is a single
+self-contained file, so you can copy it anywhere. `doit report` only reads the
+status records, so it is safe to run while you iterate.
+
 ### Rerunning after fixing something
 
 doit decides what to rerun from **files only**. Installing a Lambdapi
