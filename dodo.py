@@ -754,7 +754,14 @@ def _timelimit(group: str, recs: list[dict]) -> str:
 
 def _result_xml(group: str, recs: list[dict]) -> ET.ElementTree:
     now = time.strftime("%Y-%m-%d %H:%M:%S")
-    root = ET.Element("result", name=group, benchmarkname=group, tool=group,
+    # BenchExec's model: one benchmark, several run definitions.  Here the job
+    # is the benchmark and each stage a run definition.  table-generator
+    # labels a run set "<benchmark>.<name>" unless every run set shares the
+    # benchmark name -- giving each stage its own made the labels read
+    # "cvc5.cvc5".  With the job name shared, they read "cvc5", and the job
+    # appears once, in the header's Benchmark row.
+    root = ET.Element("result", name=group, benchmarkname=JOB_DIR.name,
+                      displayName=JOB_DIR.name, tool=group,
                       timelimit=_timelimit(group, recs),
                       # a real tool-info module: table-generator imports it and
                       # warns once per run set on anything without a Tool class
