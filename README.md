@@ -39,9 +39,17 @@ python3 -m venv .venv
 ./.venv/bin/pip install -r requirements.txt
 ```
 
-`doit` is the only Python dependency. You also need `cvc5`, `carcara`
-(`NotBad4U/carcara`, branch `lambdapi-refactor`), `lambdapi` with
-`NotBad4U/lambdapi-stdlib` installed, and `hyperfine` on `PATH`.
+You also need `cvc5`, `carcara` (`NotBad4U/carcara`, branch
+`lambdapi-refactor`) and `hyperfine` on `PATH`, plus `lambdapi` with two
+libraries installed, in this order:
+
+1. `Stdlib` — `make install` in `NotBad4U/lambdapi-stdlib`
+2. `alethe` — `make install` in carcara's `alethe-lp/`
+
+**Load opam's environment first** (`eval "$(opam env)"`), both for the
+installs and for every run. lambdapi finds its library root through
+`OPAM_SWITCH_PREFIX`; without it, it looks in `/usr/local/lib/lambdapi/lib_root`
+and every check fails with `alethe/core.lp … not found`.
 
 ```bash
 ./download_benchs.sh

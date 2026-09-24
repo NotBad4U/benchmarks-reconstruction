@@ -49,9 +49,10 @@ It installs into `$HOME/bench-toolchain`:
 | component | how | why |
 |---|---|---|
 | cvc5 1.4.0 | upstream static Linux binary | **not on conda-forge** (the package does not exist), and confirmed on the cluster: `module spider cvc5` finds nothing and it is not on `PATH`. The static build needs no compiler and no shared libraries. |
-| carcara | `cargo install --git … --branch lambdapi-refactor` | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
+| carcara | cloned at `lambdapi-refactor`, `cargo install --path` | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
 | OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` master | opam is not installed on the cluster, so the job fetches the opam binary itself |
-| lambdapi-stdlib | `make install` from `NotBad4U/lambdapi-stdlib` | provides `alethe.core` — without it every `lambdapi check` fails |
+| lambdapi-stdlib | `make install` from `NotBad4U/lambdapi-stdlib` | provides `Stdlib`, which `alethe-lp` requires |
+| Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
 | hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
 | QF_UF + UF | `download_benchs.sh` | now the default set (it used to fetch all five) |
 
@@ -193,9 +194,10 @@ Other levers, in order of effort:
    `$TMPDIR` then `/tmp/$USER`, and prints which it picked.
 3. **`opam switch create 5.2.0`** builds OCaml from source, ~15 minutes. If
    lambdapi master requires a different compiler, set `OCAML_VERSION`.
-4. **`make install` in lambdapi-stdlib** must land inside the opam switch's
-   `lib_root`. If `lambdapi check` still reports `alethe/core.lp not found`,
-   that step put the files somewhere else.
+4. **The Lambdapi libraries must land where lambdapi looks.** It finds its
+   library root through `OPAM_SWITCH_PREFIX`; without that it falls back to
+   `/usr/local/lib/lambdapi/lib_root` and finds nothing, not even `Stdlib`.
+   `setup.job` now fails loudly if `alethe.core` does not resolve.
 5. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
    `dsl-rewrite` (the `config.env` default) carcara needs a RARE database via
    `--rare-file`, which is not shipped — every elaboration fails. If you get a

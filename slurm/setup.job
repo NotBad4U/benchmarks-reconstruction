@@ -68,12 +68,17 @@ export PATH="$CARGO_HOME/bin:$PATH"
 rustup update stable
 rustc --version
 
+# A real checkout, not `cargo install --git`: that builds from a cache and
+# keeps no source tree, and step 4 needs carcara's alethe-lp/ directory.
+CARCARA_SRC="$PREFIX/src/carcara"
+if [ ! -d "$CARCARA_SRC" ]; then
+  mkdir -p "$PREFIX/src"
+  git clone --branch lambdapi-refactor https://github.com/NotBad4U/carcara "$CARCARA_SRC"
+fi
+git -C "$CARCARA_SRC" pull --ff-only || true
 if [ ! -x "$PREFIX/bin/carcara" ]; then
   echo "--- building carcara ---"
-  cargo install \
-    --git https://github.com/NotBad4U/carcara \
-    --branch lambdapi-refactor \
-    --root "$PREFIX" --jobs "$JOBS" --force
+  cargo install --path "$CARCARA_SRC" --root "$PREFIX" --jobs "$JOBS" --force
 fi
 "$PREFIX/bin/carcara" --version
 
@@ -117,17 +122,36 @@ opam pin add lambdapi https://github.com/deducteam/lambdapi.git#master --yes
 lambdapi --version || true
 
 # ---------------------------------------------------------------------------
-# 4. lambdapi-stdlib (NotBad4U/lambdapi-stdlib) -- provides alethe.core etc.
+# 4. The Lambdapi libraries the translated proofs `require`, in order:
+#      Stdlib  <- NotBad4U/lambdapi-stdlib
+#      alethe  <- carcara's own alethe-lp/   (alethe.core, alethe.prop, ...)
 # ---------------------------------------------------------------------------
-# Without this, `lambdapi check` fails with
-#   File ".../lib_root/alethe/core.lp" (or .dk) not found
+# alethe-lp requires Stdlib.HOL, Stdlib.Z, Stdlib.List, ... so Stdlib must be
+# installed first: `make install` compiles every module before installing.
+# Both land in the lib_root of the opam switch loaded above; lambdapi only
+# finds that root because OPAM_SWITCH_PREFIX is set (by `opam env`).  Without
+# it lambdapi falls back to /usr/local/lib/lambdapi/lib_root and finds nothing.
 if [ ! -d "$PREFIX/src/lambdapi-stdlib" ]; then
   mkdir -p "$PREFIX/src"
   git clone https://github.com/NotBad4U/lambdapi-stdlib "$PREFIX/src/lambdapi-stdlib"
 fi
-cd "$PREFIX/src/lambdapi-stdlib"
-git pull --ff-only || true
-make install
+git -C "$PREFIX/src/lambdapi-stdlib" pull --ff-only || true
+make -C "$PREFIX/src/lambdapi-stdlib" install
+
+make -C "$CARCARA_SRC/alethe-lp" install
+
+# Prove it: every translated proof starts with `require open alethe.core`.
+# Failing here costs nothing; finding out from thousands of failed checks in
+# a two-day benchmark run does.
+PROBE="$(mktemp -d)"
+printf 'package_name = probe\nroot_path = probe\n' > "$PROBE/lambdapi.pkg"
+printf 'require open alethe.core;\nrequire open alethe.prop;\n' > "$PROBE/probe.lp"
+if ! (cd "$PROBE" && lambdapi check -w -v 0 probe.lp); then
+  echo "ERROR: lambdapi cannot resolve alethe.core -- check OPAM_SWITCH_PREFIX" >&2
+  exit 1
+fi
+rm -rf "$PROBE"
+echo "--- alethe.core resolves ---"
 
 # ---------------------------------------------------------------------------
 # 5. Benchmarks (QF_UF and UF by default)
