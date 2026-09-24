@@ -66,16 +66,9 @@ everything, since a proof's size is only known after elaboration. Rerun the
 same `JOB_DIR` without the flag to do the large ones later: the small ones are
 already up to date.
 
-To keep stage-3 timings clean, run the work in parallel and the measurement
-serially:
-
-```bash
-BENCH_DIR=benchs/QF_UF JOB_DIR=output/run ./.venv/bin/doit -n 8 --parallel-type thread translate
-```
-
-```bash
-BENCH_DIR=benchs/QF_UF JOB_DIR=output/run ./.venv/bin/doit -n 1 check
-```
+That one command runs every stage. Stages 0–2 use all `-n` workers; the timed
+`lambdapi check`s always run one at a time, serialised by a lock inside
+`dodo.py`, so `-n` never puts the reported timings under load.
 
 ```bash
 ./.venv/bin/python collects.py output/run --csv summary.csv

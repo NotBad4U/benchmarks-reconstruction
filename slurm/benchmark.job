@@ -101,19 +101,12 @@ export PROOF_GRANULARITY="${PROOF_GRANULARITY:-theory-rewrite}"
 
 NPROC="${SLURM_CPUS_PER_TASK:-8}"
 
-echo "=== stages 0-2 (proof generation, elaboration, translation) ==="
-# Throughput matters here and nothing is being timed for publication, so use
-# every core.
-doit -n "$NPROC" --parallel-type thread translate
-
-echo "=== stage 3 (lambdapi check) ==="
-# Serial on purpose.  hyperfine times these, and a timing taken while 31 other
-# checks fight for the same cores is not worth reporting.  This is the one
-# stage whose numbers end up in the results.
-doit -n 1 check
-
-echo "=== aggregate ==="
-doit joblogs
+echo "=== pipeline ==="
+# One invocation.  Stages 0-2 use every core.  The timed checks are
+# serialised inside dodo.py (one_check_at_a_time), because a timing taken
+# while other checks fight for the same cores measures the load, not
+# lambdapi -- so -n does not distort the numbers that get reported.
+doit -n "$NPROC" --parallel-type thread
 
 # ---------------------------------------------------------------------------
 # Copy results into $HOME

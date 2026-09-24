@@ -36,6 +36,8 @@ released while waiting, and threads avoid pickling the action closures:
 
 from __future__ import annotations
 
+import contextlib
+import fcntl
 import json
 import os
 import re
@@ -440,13 +442,36 @@ def task_translate():
 # Stage 3 — lambdapi check, timed with hyperfine
 # =========================
 
+@contextlib.contextmanager
+def one_check_at_a_time():
+    """Serialise the timed checks, whatever `-n` the run was started with.
+
+    The check timings are the numbers that get reported, and a timing taken
+    while other checks compete for the same cores measures the load, not
+    lambdapi.  Stages 0-2 are not timed, so they stay fully parallel; this
+    lock is what lets a single `doit -n 8` run the whole pipeline correctly
+    instead of needing a separate `doit -n 1 check`.
+
+    An flock on a file, not a threading.Lock, so it also holds with
+    `--parallel-type process`.  It is taken *before* the clock starts, so
+    time spent queueing does not count against LAMBDAPI_CHECK_TIMEOUT.
+    """
+    with open(JOB_DIR / ".check.lock", "w") as fh:
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def _hyperfine(stem: str, stage: str, inner: str, cwd: Path,
                warmup: str, max_runs: str) -> bool:
     export = RESULTS / f"{stem}.json"
     export.parent.mkdir(parents=True, exist_ok=True)
     cmd = ["hyperfine", "--warmup", warmup, "--max-runs", max_runs,
            "--time-unit", "second", "--export-json", str(export), inner]
-    ev, sg, start, wall = run_limited(cmd, CHECK_TIMEOUT, cwd=cwd)
+    with one_check_at_a_time():
+        ev, sg, start, wall = run_limited(cmd, CHECK_TIMEOUT, cwd=cwd)
     record(stage, stem, cmd, ev, sg, start, wall, export=str(export))
     return True
 
