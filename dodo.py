@@ -364,7 +364,8 @@ def do_gen_proof(stem: str) -> bool:
     if dropped and out.exists():
         out.unlink()
 
-    record("cvc5", stem, cmd, ev, sg, start, wall, dropped=dropped)
+    record("cvc5", stem, cmd, ev, sg, start, wall, dropped=dropped,
+           timeout_seconds=CVC5_TIMEOUT)
     return True  # never fail the task; the record carries the outcome
 
 
@@ -408,7 +409,8 @@ def do_elaborate(stem: str) -> bool:
     proof_status = "" if dropped else split_status_line(out)
     drop_if_empty(out)
     record("elaborate", stem, cmd, ev, sg, start, wall,
-           proof_status=proof_status, dropped=dropped)
+           proof_status=proof_status, dropped=dropped,
+           timeout_seconds=ELAB_TIMEOUT)
     return True
 
 
@@ -442,7 +444,8 @@ def do_translate_small(stem: str) -> bool:
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
-    record("translate_small", stem, cmd, ev, sg, start, wall, dropped=dropped)
+    record("translate_small", stem, cmd, ev, sg, start, wall, dropped=dropped,
+           timeout_seconds=TRANSLATE_TIMEOUT)
     return True
 
 
@@ -459,7 +462,8 @@ def do_translate_large(stem: str) -> bool:
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
-    record("translate_large", stem, cmd, ev, sg, start, wall, dropped=dropped)
+    record("translate_large", stem, cmd, ev, sg, start, wall, dropped=dropped,
+           timeout_seconds=TRANSLATE_TIMEOUT)
     return True
 
 
@@ -529,7 +533,8 @@ def _hyperfine(stem: str, stage: str, inner: str, cwd: Path,
            "--time-unit", "second", "--export-json", str(export), inner]
     with one_check_at_a_time():
         ev, sg, start, wall = run_limited(cmd, CHECK_TIMEOUT, cwd=cwd)
-    record(stage, stem, cmd, ev, sg, start, wall, export=str(export))
+    record(stage, stem, cmd, ev, sg, start, wall, export=str(export),
+           timeout_seconds=CHECK_TIMEOUT)
     return True
 
 
@@ -719,9 +724,38 @@ def _check_seconds(stem: str) -> float | None:
     return res["mean"] if all(c == 0 for c in res.get("exit_codes", [1])) else None
 
 
+def _timelimit(group: str, recs: list[dict]) -> str:
+    """The limit the records actually ran under, for table-generator's header.
+
+    Recorded per task since the records carried it; records older than that
+    fall back to the current config.env, and the text says so.  Several values
+    means the job mixes runs made under different limits, which is worth
+    seeing.  memlimit and CPU cores are left unset because nothing enforces
+    them -- that takes cgroups, which macOS does not have.
+    """
+    current = {"cvc5": CVC5_TIMEOUT, "elaborate": ELAB_TIMEOUT,
+               "translate": TRANSLATE_TIMEOUT, "check": CHECK_TIMEOUT}[group]
+    recorded = sorted({r["timeout_seconds"] for r in recs
+                       if r.get("timeout_seconds") is not None})
+    unrecorded = any(r.get("timeout_seconds") is None for r in recs)
+    values = [f"{v:g}s" for v in recorded]
+    if unrecorded and f"{current:g}s" not in values:
+        values.append(f"{current:g}s")
+    text = ", ".join(values)
+    if len(values) > 1:
+        text += " (mixed)"
+    if unrecorded:
+        text += (" (not recorded, taken from config.env)" if not recorded
+                 else " (partly taken from config.env)")
+    if group == "check":
+        text += " for the whole hyperfine run, warmups included"
+    return text
+
+
 def _result_xml(group: str, recs: list[dict]) -> ET.ElementTree:
     now = time.strftime("%Y-%m-%d %H:%M:%S")
     root = ET.Element("result", name=group, benchmarkname=group, tool=group,
+                      timelimit=_timelimit(group, recs),
                       # a real tool-info module: table-generator imports it and
                       # warns once per run set on anything without a Tool class
                       toolmodule="benchexec.tools.dummy", version="-",
