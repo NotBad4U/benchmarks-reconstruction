@@ -3,10 +3,18 @@
 #     python3 -m venv .venv
 #     ./.venv/bin/pip install -r requirements.txt
 #
-# That is the only Python dependency.  collects.py uses the standard library
-# alone; numpy, pandas, tabulate and python-dateutil were needed only by the
-# joblog parsers that have since been removed.
+# collects.py uses the standard library alone; numpy, pandas, tabulate and
+# python-dateutil were needed only by the joblog parsers since removed.
 doit>=0.36
+
+# `doit graph`: writes the task dependency graph as a Graphviz .dot file.
+#     ./.venv/bin/doit graph --show-subtasks -o tasks.dot
+#     dot -Tpng tasks.dot -o tasks.png
+# Pulls in pygraphviz, a C extension.  PyPI has prebuilt manylinux_2_28 and
+# macOS wheels for it, so no compiler is needed -- but on a Linux host with
+# glibc older than 2.28, pip falls back to building from source and needs the
+# Graphviz headers installed.  Rendering the .png needs the `dot` binary.
+doit-graph>=0.3
 
 # Non-Python tools dodo.py shells out to: cvc5, carcara, lambdapi, hyperfine.
 # On the ITU cluster, slurm/setup.job builds all of them into $HOME.
