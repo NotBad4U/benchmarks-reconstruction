@@ -85,6 +85,17 @@ One logic only:
 sbatch slurm/benchmark.job QF_UF
 ```
 
+Small proofs only, skipping everything over `PROOF_SPLIT_LIMIT` at the
+translate and check stages:
+
+```bash
+sbatch --export=ALL,SKIP_LARGE=1 slurm/benchmark.job
+```
+
+`--export=ALL,` keeps the rest of your environment; `--export=SKIP_LARGE=1`
+alone would pass *only* that variable. The setting is recorded in the run's
+`run-info.txt`.
+
 The ITU docs say explicitly that a CPU-only job should request **both** `cores`
 and `cores_any` — `cores_any` is spare cores on the GPU nodes, so asking for
 both roughly doubles the set of nodes that can start you.

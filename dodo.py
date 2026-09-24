@@ -128,7 +128,16 @@ def _parse_size(spec: str) -> int:
     return n * factors[unit]
 
 
-SPLIT_BYTES = _parse_size(os.environ.get("PROOF_SPLIT_LIMIT", "1M"))
+SPLIT_LIMIT = os.environ.get("PROOF_SPLIT_LIMIT", "1M")
+SPLIT_BYTES = _parse_size(SPLIT_LIMIT)
+
+# SKIP_LARGE=1: do not translate or check proofs over PROOF_SPLIT_LIMIT.
+# Large proofs dominate the run time (on eq_diamond, translation took a median
+# 0.13s small vs 5.9s large), so this is for iterating quickly.  Stages 0-1
+# still run on everything, since a proof's size is only known once it has been
+# elaborated.  Unset it and rerun the same JOB_DIR to do the large ones later:
+# the small ones are up to date and are skipped.
+SKIP_LARGE = os.environ.get("SKIP_LARGE", "").strip().lower() in ("1", "true", "yes", "on")
 
 
 # =========================
@@ -403,6 +412,7 @@ def task_translate():
     The routing depends on the size of a file produced by the *previous* stage.
     That is the piece a static Makefile cannot express without re-invoking make.
     """
+    skipped = 0
     for elab in sorted(ALETHE.rglob("*.elab")):
         stem = str(elab.relative_to(ALETHE).with_suffix(""))
         problem = problem_for(stem)
@@ -411,6 +421,9 @@ def task_translate():
         # fd's -1M/+1M both match a file of exactly the limit, so today such a
         # file is translated twice.  '<=' / '>' here makes the split a partition.
         small = elab.stat().st_size <= SPLIT_BYTES
+        if not small and SKIP_LARGE:
+            skipped += 1
+            continue
         stage = "translate_small" if small else "translate_large"
         action = do_translate_small if small else do_translate_large
         yield {
@@ -420,6 +433,7 @@ def task_translate():
             "targets": [str(status_path(stage, stem))],
             "clean": True,
         }
+    _report_skipped("translating", skipped)
 
 
 # =========================
@@ -479,7 +493,11 @@ def task_check():
             "clean": True,
         }
 
-    for lp in sorted(LARGE.rglob("*.lp")):
+    large = sorted(LARGE.rglob("*.lp"))
+    if SKIP_LARGE:
+        _report_skipped("checking", len(large))
+        large = []
+    for lp in large:
         stem = str(lp.relative_to(LARGE).with_suffix(""))
         yield {
             "name": f"large/{stem}",
@@ -488,6 +506,14 @@ def task_check():
             "targets": [str(status_path("lambdapi_large_check", stem))],
             "clean": True,
         }
+
+
+def _report_skipped(what: str, n: int) -> None:
+    """Say it out loud: skipped proofs are simply absent from the later
+    stages' records, so a silent skip would read as failures in the report."""
+    if n:
+        print(f"SKIP_LARGE: not {what} {n} proof(s) over "
+              f"PROOF_SPLIT_LIMIT={SPLIT_LIMIT}", file=sys.stderr)
 
 
 def _leaf_dirs(root: Path) -> Iterator[Path]:

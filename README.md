@@ -54,6 +54,18 @@ BENCH_DIR=benchs/QF_UF JOB_DIR=output/run PROOF_GRANULARITY=theory-rewrite ./.ve
 `JOB_DIR` must stay the same between invocations: that is what lets a rerun
 resume instead of starting over.
 
+To iterate quickly, skip the large proofs, which dominate the run time:
+
+```bash
+SKIP_LARGE=1 ./.venv/bin/doit -n 8 --parallel-type thread
+```
+
+Proofs over `PROOF_SPLIT_LIMIT` (1 MB) are then neither translated nor checked,
+and the run prints how many it skipped. Cvc5 and elaboration still run on
+everything, since a proof's size is only known after elaboration. Rerun the
+same `JOB_DIR` without the flag to do the large ones later: the small ones are
+already up to date.
+
 To keep stage-3 timings clean, run the work in parallel and the measurement
 serially:
 

@@ -13,6 +13,7 @@
 #
 #   sbatch slurm/benchmark.job              # QF_UF + UF (everything downloaded)
 #   sbatch slurm/benchmark.job QF_UF        # one logic only
+#   sbatch --export=ALL,SKIP_LARGE=1 slurm/benchmark.job   # small proofs only
 #
 # Requires slurm/setup.job to have run once.
 #
@@ -140,6 +141,7 @@ partition       : ${SLURM_JOB_PARTITION:-?}
 cores           : ${SLURM_CPUS_PER_TASK:-?}
 benchmark_dir   : $BENCH_DIR
 proof_granularity: $PROOF_GRANULARITY
+skip_large      : ${SKIP_LARGE:-0}
 started         : $(date -Iseconds)
 cvc5            : $(cvc5 --version | head -1)
 carcara         : $(carcara --version)
