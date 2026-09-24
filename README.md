@@ -77,12 +77,16 @@ already up to date.
 ### Viewing the results in a browser
 
 ```bash
-./.venv/bin/doit report
+JOB_DIR=output/run ./.venv/bin/doit report
 ```
 
 ```bash
 open output/run/report/results.table.html
 ```
+
+Pass the same `JOB_DIR` you ran with: without it, `doit` looks at the
+default `output/doit-run`, and `report` will list the job dirs that do have
+results.
 
 That is BenchExec's table-generator: one row per benchmark, one column group
 per stage, sortable and filterable, with quantile ("cactus") and scatter plots.

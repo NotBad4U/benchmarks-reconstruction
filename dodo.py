@@ -771,6 +771,20 @@ def do_report() -> bool:
             if prev is None or rec["starttime"] > prev["starttime"]:
                 groups[group][rec["stem"]] = rec   # newest wins
 
+    if not groups:
+        # The usual cause: JOB_DIR unset, so this is the default job dir
+        # rather than the one that was run.  Say which ones have records.
+        print(f"report: no status records in {JOB_DIR}", file=sys.stderr)
+        parent = JOB_DIR.parent
+        found = sorted(d.name for d in parent.iterdir()
+                       if d != JOB_DIR and d.is_dir()
+                       and any((d / "status").rglob("*.json"))) if parent.is_dir() else []
+        if found:
+            print(f"report: job dirs that do have records: {', '.join(found)}\n"
+                  f"report: e.g.  JOB_DIR={parent.name}/{found[0]} doit report",
+                  file=sys.stderr)
+        return False
+
     REPORT.mkdir(parents=True, exist_ok=True)
     xml_files = []
     for group in dict.fromkeys(g for _, g in REPORT_GROUPS):
@@ -782,8 +796,11 @@ def do_report() -> bool:
             out, encoding="utf-8", xml_declaration=True)
         xml_files.append(str(out))
 
-    subprocess.run([tg, "-q", "-o", str(REPORT), "-n", "results", *xml_files],
-                   check=True)
+    if subprocess.run([tg, "-q", "-o", str(REPORT), "-n", "results",
+                       *xml_files]).returncode != 0:
+        print("report: table-generator failed (its messages are above)",
+              file=sys.stderr)
+        return False
     html = REPORT / "results.table.html"
     print(f"report: {html}")
     return True
