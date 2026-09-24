@@ -74,6 +74,22 @@ everything, since a proof's size is only known after elaboration. Rerun the
 same `JOB_DIR` without the flag to do the large ones later: the small ones are
 already up to date.
 
+### Rerunning after fixing something
+
+doit decides what to rerun from **files only**. Installing a Lambdapi
+library, fixing a tool flag or changing a timeout touches no file it tracks,
+and a failed tool still writes a valid record — so a plain rerun does nothing,
+and the failures stay failures. Name the stages to retry instead:
+
+```bash
+RETRY_FAILED=translate,check ./.venv/bin/doit -n 8 --parallel-type thread
+```
+
+Tasks in those stages whose last record is not a success run again; everything
+that succeeded is skipped. Stages are `gen_proof`, `elaborate`, `translate`,
+`check`, or `all`. Retrying `gen_proof` or `elaborate` only helps if you changed
+something, such as a timeout — otherwise the same failures come back.
+
 That one command runs every stage. Stages 0–2 use all `-n` workers; the timed
 `lambdapi check`s always run one at a time, serialised by a lock inside
 `dodo.py`, so `-n` never puts the reported timings under load.

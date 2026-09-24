@@ -150,6 +150,34 @@ SPLIT_BYTES = _parse_size(SPLIT_LIMIT)
 # the small ones are up to date and are skipped.
 SKIP_LARGE = os.environ.get("SKIP_LARGE", "").strip().lower() in ("1", "true", "yes", "on")
 
+# RETRY_FAILED=translate,check reruns the tasks in those stages whose last
+# record is not a success, and nothing else.  Needed because doit only watches
+# files: installing a Lambdapi library, fixing a tool flag or changing a
+# timeout changes no file it tracks, and a failed tool still leaves a valid
+# record, so without this the failures count as done forever.
+# Stages: gen_proof, elaborate, translate, check -- or `all`.
+STAGES = ("gen_proof", "elaborate", "translate", "check")
+
+
+def _parse_retry(spec: str) -> frozenset:
+    spec = spec.strip().lower()
+    if spec in ("", "0", "false", "no", "off"):
+        return frozenset()
+    if spec in ("1", "true", "yes", "on", "all"):
+        return frozenset(STAGES)
+    names = {x.strip() for x in spec.split(",") if x.strip()}
+    unknown = names - set(STAGES)
+    if unknown:
+        sys.exit(f"RETRY_FAILED: unknown stage(s) {', '.join(sorted(unknown))}; "
+                 f"choose from {', '.join(STAGES)}, or all")
+    return frozenset(names)
+
+
+RETRY_FAILED = _parse_retry(os.environ.get("RETRY_FAILED", ""))
+if RETRY_FAILED:
+    print("RETRY_FAILED: rerunning failed tasks in: "
+          + ", ".join(x for x in STAGES if x in RETRY_FAILED), file=sys.stderr)
+
 
 # =========================
 # Running & recording
@@ -219,6 +247,20 @@ def classify(exitval: int, sig: int) -> str:
 
 def status_path(stage: str, stem: str) -> Path:
     return STATUS / stage / f"{stem}.json"
+
+
+def retry_gate(group: str, record_stage: str, stem: str):
+    """doit `uptodate` check.  When RETRY_FAILED names this task's stage, a
+    task whose last record is not a success is out of date and runs again.
+    Otherwise it has no opinion, and doit's usual file checks decide."""
+    def last_run_succeeded() -> bool:
+        if group not in RETRY_FAILED:
+            return True
+        try:
+            return json.loads(status_path(record_stage, stem).read_text())["status"] == "success"
+        except (OSError, ValueError, KeyError):
+            return False
+    return last_run_succeeded
 
 
 def record(stage: str, stem: str, cmd: Iterable[str], exitval: int, sig: int,
@@ -332,6 +374,7 @@ def task_gen_proof():
             "actions": [(do_gen_proof, [stem])],
             "file_dep": [str(src)],
             "targets": [str(status_path("cvc5", stem))],
+            "uptodate": [retry_gate("gen_proof", "cvc5", stem)],
             "clean": True,
         }
 
@@ -379,6 +422,7 @@ def task_elaborate():
             "actions": [(do_elaborate, [stem])],
             "file_dep": [str(proof), str(problem)],
             "targets": [str(status_path("elaborate", stem))],
+            "uptodate": [retry_gate("elaborate", "elaborate", stem)],
             "clean": True,
         }
 
@@ -442,6 +486,7 @@ def task_translate():
             "actions": [(action, [stem])],
             "file_dep": [str(elab), str(problem)],
             "targets": [str(status_path(stage, stem))],
+            "uptodate": [retry_gate("translate", stage, stem)],
             "clean": True,
         }
     _report_skipped("translating", skipped)
@@ -524,6 +569,7 @@ def task_check():
             "actions": [(do_check_small, [stem])],
             "file_dep": [str(lp)],
             "targets": [str(status_path("lambdapi_small_check", stem))],
+            "uptodate": [retry_gate("check", "lambdapi_small_check", stem)],
             "clean": True,
         }
 
@@ -538,6 +584,7 @@ def task_check():
             "actions": [(do_check_large, [stem])],
             "file_dep": [str(lp)],
             "targets": [str(status_path("lambdapi_large_check", stem))],
+            "uptodate": [retry_gate("check", "lambdapi_large_check", stem)],
             "clean": True,
         }
 
