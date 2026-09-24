@@ -18,8 +18,15 @@ ssh alecol@hpc.itu.dk
 Then, on the cluster:
 
 ```bash
-git clone git@github.com:NotBad4U/benchmarks-reconstruction.git && cd benchmarks-reconstruction
+git clone -b v2 https://github.com/NotBad4U/benchmarks-reconstruction.git && cd benchmarks-reconstruction
 ```
+
+Two details that matter:
+
+- **`-b v2`**: without it you get `main`, which has none of this pipeline.
+- **HTTPS, not `git@github.com:`**: your GitHub SSH key lives on your laptop,
+  not on the cluster, so an SSH clone fails there. The repo is public, so
+  HTTPS needs no credentials.
 
 Create the tmp directory the ITU docs ask for, once:
 
