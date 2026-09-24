@@ -239,6 +239,24 @@ def split_status_line(path: Path) -> str:
     return word
 
 
+def discard_unless_ok(path: Path, exitval: int, sig: int) -> str:
+    """Delete `path` unless the tool that wrote it exited cleanly.
+
+    A tool killed by the timeout has usually already streamed part of its
+    output -- carcara elaborate prints its status line and starts on the
+    proof before it is killed -- so a non-empty file proves nothing.  Keeping
+    it passes a truncated artifact downstream, where the next stage fails on
+    it too and the benchmark is counted as a failure twice.
+
+    Returns the reason for discarding, or "" if the artifact was kept.
+    """
+    if (exitval, sig) == (0, 0):
+        return ""
+    if path.exists():
+        path.unlink()
+    return "incomplete" if sig else f"exit:{exitval}"
+
+
 def drop_if_empty(path: Path) -> bool:
     """jobs.py's remove_empty_entries(), applied at the point of production."""
     if path.exists() and path.stat().st_size == 0:
@@ -266,11 +284,13 @@ def do_gen_proof(stem: str) -> bool:
     # else must be dropped here or stage 1 picks it up and records it as an
     # elaboration *error*: cvc5 prints `sat`/`unknown` with exit status 0, so
     # the exit code alone does not tell them apart.
-    dropped = ""
+    dropped = discard_unless_ok(out, ev, sg)
     text = out.read_text(errors="ignore") if out.exists() else ""
     answer, _, body = text.lstrip().partition("\n")
     answer = answer.strip()
-    if not text.strip():
+    if dropped:
+        pass
+    elif not text.strip():
         dropped = "empty"
     elif answer != "unsat":
         dropped = f"answer:{answer[:32]}"   # sat, unknown, an error message...
@@ -318,9 +338,11 @@ def do_elaborate(stem: str) -> bool:
     # when -i turned unknown rules into holes).  `translate` cannot parse it,
     # so strip it here and keep it as data: it says whether the proof still
     # contains holes, which is worth reporting rather than discarding.
-    proof_status = split_status_line(out)
+    dropped = discard_unless_ok(out, ev, sg)
+    proof_status = "" if dropped else split_status_line(out)
     drop_if_empty(out)
-    record("elaborate", stem, cmd, ev, sg, start, wall, proof_status=proof_status)
+    record("elaborate", stem, cmd, ev, sg, start, wall,
+           proof_status=proof_status, dropped=dropped)
     return True
 
 
@@ -351,8 +373,9 @@ def do_translate_small(stem: str) -> bool:
     cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
+    dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
-    record("translate_small", stem, cmd, ev, sg, start, wall)
+    record("translate_small", stem, cmd, ev, sg, start, wall, dropped=dropped)
     return True
 
 
@@ -367,8 +390,9 @@ def do_translate_large(stem: str) -> bool:
     cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
+    dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
-    record("translate_large", stem, cmd, ev, sg, start, wall)
+    record("translate_large", stem, cmd, ev, sg, start, wall, dropped=dropped)
     return True
 
 
