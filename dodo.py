@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import functools
 import json
 import os
 import platform
@@ -252,6 +253,21 @@ def status_path(stage: str, stem: str) -> Path:
     return STATUS / stage / f"{stem}.json"
 
 
+@functools.lru_cache(maxsize=None)
+def tool_version(tool: str) -> str:
+    """`<tool> --version` without the leading tool name, e.g. carcara's
+    "1.1.0 [git 1bbe083 lambdapi-refactor]".  Cached: one call per doit run,
+    not one per task.  "" if the tool cannot be run."""
+    try:
+        out = subprocess.run([tool, "--version"], capture_output=True,
+                             text=True, timeout=30)
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    lines = (out.stdout or out.stderr).strip().splitlines()
+    line = lines[0].strip() if lines else ""
+    return line[len(tool) + 1:] if line.startswith(tool + " ") else line
+
+
 def retry_gate(group: str, record_stage: str, stem: str):
     """doit `uptodate` check.  When RETRY_FAILED names this task's stage, a
     task whose last record is not a success is out of date and runs again.
@@ -365,7 +381,7 @@ def do_gen_proof(stem: str) -> bool:
         out.unlink()
 
     record("cvc5", stem, cmd, ev, sg, start, wall, dropped=dropped,
-           timeout_seconds=CVC5_TIMEOUT)
+           timeout_seconds=CVC5_TIMEOUT, tool_version=tool_version("cvc5"))
     return True  # never fail the task; the record carries the outcome
 
 
@@ -410,7 +426,7 @@ def do_elaborate(stem: str) -> bool:
     drop_if_empty(out)
     record("elaborate", stem, cmd, ev, sg, start, wall,
            proof_status=proof_status, dropped=dropped,
-           timeout_seconds=ELAB_TIMEOUT)
+           timeout_seconds=ELAB_TIMEOUT, tool_version=tool_version("carcara"))
     return True
 
 
@@ -445,7 +461,7 @@ def do_translate_small(stem: str) -> bool:
     dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
     record("translate_small", stem, cmd, ev, sg, start, wall, dropped=dropped,
-           timeout_seconds=TRANSLATE_TIMEOUT)
+           timeout_seconds=TRANSLATE_TIMEOUT, tool_version=tool_version("carcara"))
     return True
 
 
@@ -463,7 +479,7 @@ def do_translate_large(stem: str) -> bool:
     dropped = discard_unless_ok(out, ev, sg)
     drop_if_empty(out)
     record("translate_large", stem, cmd, ev, sg, start, wall, dropped=dropped,
-           timeout_seconds=TRANSLATE_TIMEOUT)
+           timeout_seconds=TRANSLATE_TIMEOUT, tool_version=tool_version("carcara"))
     return True
 
 
@@ -534,7 +550,7 @@ def _hyperfine(stem: str, stage: str, inner: str, cwd: Path,
     with one_check_at_a_time():
         ev, sg, start, wall = run_limited(cmd, CHECK_TIMEOUT, cwd=cwd)
     record(stage, stem, cmd, ev, sg, start, wall, export=str(export),
-           timeout_seconds=CHECK_TIMEOUT)
+           timeout_seconds=CHECK_TIMEOUT, tool_version=tool_version("lambdapi"))
     return True
 
 
@@ -724,6 +740,34 @@ def _check_seconds(stem: str) -> float | None:
     return res["mean"] if all(c == 0 for c in res.get("exit_codes", [1])) else None
 
 
+# The binary behind each stage, for table-generator's Tool row.  That row
+# merges equal neighbouring cells, so elaborate and translate share one
+# "carcara" cell spanning both.
+REPORT_TOOL = {"cvc5": "cvc5", "elaborate": "carcara",
+               "translate": "carcara", "check": "lambdapi"}
+
+
+def _version(group: str, recs: list[dict]) -> str:
+    """Version of the binary that produced the records, like _timelimit:
+    recorded per task, falling back to the installed binary -- and saying so
+    -- for records older than that.  Several values read "(mixed)"."""
+    current = tool_version(REPORT_TOOL[group])
+    recorded = sorted({r["tool_version"] for r in recs if r.get("tool_version")})
+    unrecorded = any(not r.get("tool_version") for r in recs)
+    values = list(recorded)
+    if unrecorded and current and current not in values:
+        values.append(current)
+    if not values:
+        return ""
+    text = ", ".join(values)
+    if len(values) > 1:
+        text += " (mixed)"
+    if unrecorded:
+        text += (" (not recorded, installed binary)" if not recorded
+                 else " (partly the installed binary)")
+    return text
+
+
 def _timelimit(group: str, recs: list[dict]) -> str:
     """The limit the records actually ran under, for table-generator's header.
 
@@ -761,11 +805,14 @@ def _result_xml(group: str, recs: list[dict]) -> ET.ElementTree:
     # "cvc5.cvc5".  With the job name shared, they read "cvc5", and the job
     # appears once, in the header's Benchmark row.
     root = ET.Element("result", name=group, benchmarkname=JOB_DIR.name,
-                      displayName=JOB_DIR.name, tool=group,
+                      displayName=JOB_DIR.name, tool=REPORT_TOOL[group],
                       timelimit=_timelimit(group, recs),
                       # a real tool-info module: table-generator imports it and
                       # warns once per run set on anything without a Tool class
-                      toolmodule="benchexec.tools.dummy", version="-",
+                      toolmodule="benchexec.tools.dummy",
+                      # "" when unknown, never "-": table-generator drops an
+                      # empty version from the Tool cell but prints a dash
+                      version=_version(group, recs),
                       starttime=now, date=now,
                       generator="dodo.py")
     cols = ET.SubElement(root, "columns")
