@@ -88,6 +88,15 @@ ELAB_TIMEOUT = float(os.environ.get("CARCARA_CHECK_ELAB_TIMEOUT", 60))
 TRANSLATE_TIMEOUT = float(os.environ.get("CARCARA_TRANSLATE_TIMEOUT", 60))
 CHECK_TIMEOUT = float(os.environ.get("LAMBDAPI_CHECK_TIMEOUT", 60))
 TRANSLATE_TARGET = os.environ.get("TRANSLATE_TARGET", "lambdapi")
+
+# Parsing options that elaborate and translate MUST share.  carcara 1.1's
+# `translate` re-elaborates its input (the old `--no-elab` is gone), so it has
+# to parse the problem exactly as `elaborate` did.  With `--expand-let-bindings`
+# on one side only, the let-expanded `assume` steps in the .elab no longer match
+# the problem's assertions and carcara panics (exit 101):
+#   "trying to elaborate assume, but it is invalid!"  (src/elaborator/mod.rs:270)
+# That was 3,251 of 3,571 translations on full QF_UF.
+PARSE_FLAGS = ["--expand-let-bindings"]
 # dsl-rewrite makes cvc5 emit `rare_rewrite` steps, which carcara can only
 # check when given the RARE database via --rare-file.  Without that file every
 # elaboration fails with "the rule <name> wasn't found".
@@ -341,7 +350,7 @@ def do_elaborate(stem: str) -> bool:
     out.parent.mkdir(parents=True, exist_ok=True)
     cmd = [
         "carcara", "elaborate", "--no-print-with-sharing",
-        "--expand-let-bindings", "-i", "--log", "off",
+        *PARSE_FLAGS, "-i", "--log", "off",
         str(PROOFS / f"{stem}.proof"), str(problem_for(stem)),
     ]
     ev, sg, start, wall = run_limited(cmd, ELAB_TIMEOUT, stdout_path=out)
@@ -381,7 +390,7 @@ def task_elaborate():
 def do_translate_small(stem: str) -> bool:
     out = SMALL / f"{stem}.lp"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
+    cmd = ["carcara", "translate", "--admit-unsupported", *PARSE_FLAGS, TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
@@ -398,7 +407,7 @@ def do_translate_large(stem: str) -> bool:
     # (and collects.py) separates the two.
     out = LARGE / f"{stem}.lp"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--admit-unsupported", TRANSLATE_TARGET,
+    cmd = ["carcara", "translate", "--admit-unsupported", *PARSE_FLAGS, TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
