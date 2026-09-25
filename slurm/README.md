@@ -198,7 +198,12 @@ Other levers, in order of effort:
    library root through `OPAM_SWITCH_PREFIX`; without that it falls back to
    `/usr/local/lib/lambdapi/lib_root` and finds nothing, not even `Stdlib`.
    `setup.job` now fails loudly if `alethe.core` does not resolve.
-5. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
+5. ~~**`m4` is absent on the compute nodes**~~ — hit for real: carcara depends
+   on `rug` -> `gmp-mpfr-sys`, which builds GMP from source, and GMP's
+   `configure` dies with `No usable m4 in $PATH`. `setup.job` now loads an `M4`
+   module if the cluster has one and otherwise builds m4 1.4.19 into
+   `$PREFIX` before touching cargo.
+6. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
    `dsl-rewrite` (the `config.env` default) carcara needs a RARE database via
    `--rare-file`, which is not shipped — every elaboration fails. If you get a
    RARE file, set `PROOF_GRANULARITY=dsl-rewrite` and pass it through.

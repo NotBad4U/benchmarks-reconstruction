@@ -76,6 +76,34 @@ if [ ! -d "$CARCARA_SRC" ]; then
   git clone --branch lambdapi-refactor https://github.com/NotBad4U/carcara "$CARCARA_SRC"
 fi
 git -C "$CARCARA_SRC" pull --ff-only || true
+
+# carcara depends on rug -> gmp-mpfr-sys, which builds GMP from source, and
+# GMP's configure aborts with "No usable m4 in $PATH" when m4 is missing -- it
+# is missing on the ITU compute nodes, which is exactly where job 130513 died.
+# Prefer a site module; otherwise build it here: a two-minute autotools build
+# whose only dependency is the C compiler cargo is already using.
+export PATH="$PREFIX/bin:$PATH"
+if ! command -v m4 >/dev/null 2>&1; then
+  for mod in M4 m4; do
+    module load "$mod" >/dev/null 2>&1 && break
+  done
+fi
+if ! command -v m4 >/dev/null 2>&1; then
+  echo "--- no m4 on PATH and no m4 module, building it from source ---"
+  M4_VERSION="${M4_VERSION:-1.4.19}"
+  (
+    cd "$TMPDIR"
+    curl -fL --retry 3 -o "m4-$M4_VERSION.tar.gz" \
+      "https://ftp.gnu.org/gnu/m4/m4-$M4_VERSION.tar.gz"
+    rm -rf "m4-$M4_VERSION" && tar -xzf "m4-$M4_VERSION.tar.gz"
+    cd "m4-$M4_VERSION"
+    ./configure --prefix="$PREFIX"
+    make -j"$JOBS" && make install
+  )
+  rm -rf "$TMPDIR/m4-$M4_VERSION" "$TMPDIR/m4-$M4_VERSION.tar.gz"
+fi
+m4 --version | head -1
+
 if [ ! -x "$PREFIX/bin/carcara" ]; then
   echo "--- building carcara ---"
   cargo install --path "$CARCARA_SRC" --root "$PREFIX" --jobs "$JOBS" --force
