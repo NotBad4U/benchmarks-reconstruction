@@ -3,9 +3,10 @@
 Two jobs: `setup.job` builds the toolchain and downloads the benchmarks (run it
 once), `benchmark.job` runs the pipeline and copies the results into `$HOME`.
 
-> **These scripts have never been executed.** They were written against the ITU
-> documentation, not against the cluster. Expect to fix at least the module
-> names. Run the smoke test below before the real thing.
+> **Partially executed.** Job 130513 got through cvc5 and rustup and then died
+> building carcara's GMP dependency for want of `m4`. Everything from the opam
+> switch onwards is still unverified. Run the smoke test below before the real
+> thing, and `slurm/check-deps.sh` before either.
 
 ## 0. Get the repository onto the cluster
 
@@ -55,6 +56,43 @@ It installs into `$HOME/bench-toolchain`:
 | Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
 | hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
 | QF_UF + UF | `download_benchs.sh` | now the default set (it used to fetch all five) |
+
+### What the host has to provide
+
+`setup.job` compiles carcara, OCaml and lambdapi from source, so it needs more
+of the host than the ITU docs list. `slurm/check-deps.sh` reports what a given
+host actually has — binaries, a real compile-and-link test per dev library, and
+the modules that could supply anything missing:
+
+```bash
+srun -p scavenge --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
+```
+
+Run it **on a compute node**, not on the login node. They are not the same host,
+and that difference is what killed the first run: `m4` sits at `/usr/bin/m4` on
+`slurmhead`, yet GMP's configure could not find one on the node it landed on.
+`bash -lc` is needed for the `module` function to exist.
+
+| need | pulled in by | where it comes from |
+|---|---|---|
+| cc, c++, make, ar, ranlib | everything built from source | on the nodes |
+| `m4` | carcara → rug → gmp-mpfr-sys, which builds GMP | `module load M4`, else built into `$PREFIX` |
+| libgmp + headers | lambdapi → why3 → zarith | built into `$PREFIX`; no header on the nodes |
+| libev + headers | lambdapi → dream → conf-libev | built into `$PREFIX`; **no libev module exists** — the cluster's `libevent` is a different library and conf-libev links `-lev` and accepts nothing else |
+| OpenSSL headers | lambdapi → dream → ssl/lwt_ssl | present on the host (`OpenSSL/3` module too) |
+| zlib | camlzip, if the chain pulls it | present |
+| unzip, tar, xz, bzip2, patch, rsync, pkg-config | cvc5 release, opam | present |
+
+GMP and libev go into `$PREFIX`, not a module, because `$PREFIX` is under `$HOME`
+and every node mounts it: `benchmark.job` runs on `cores`/`cores_any` while
+`setup.job` builds on `scavenge`, and a module loaded during the build would not
+follow. `env.sh` therefore exports `C_INCLUDE_PATH`, `LIBRARY_PATH`,
+`LD_LIBRARY_PATH` and `PKG_CONFIG_PATH` pointing there — the first two are
+literally what conf-libev's `discover.ml` probes.
+
+`fd` and GNU parallel are **not** needed, despite comments all over the pipeline
+naming them: `dodo.py` reimplements both, and `download_benchs.sh` falls back to
+`find`.
 
 `opam init` is run with **`--disable-sandboxing`**. opam's sandbox uses
 bubblewrap and user namespaces, which are restricted on most HPC nodes; without
@@ -203,7 +241,11 @@ Other levers, in order of effort:
    `configure` dies with `No usable m4 in $PATH`. `setup.job` now loads an `M4`
    module if the cluster has one and otherwise builds m4 1.4.19 into
    `$PREFIX` before touching cargo.
-6. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
+6. **`why3` and `dream` are the unverified part.** lambdapi master depends on
+   both, which is where libgmp and libev come from; nothing past the opam
+   switch has run on the cluster yet. If `conf-libev` still fails, its error
+   names the two variables it wants — check `env.sh` exported them.
+7. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
    `dsl-rewrite` (the `config.env` default) carcara needs a RARE database via
    `--rare-file`, which is not shipped — every elaboration fails. If you get a
    RARE file, set `PROOF_GRANULARITY=dsl-rewrite` and pass it through.

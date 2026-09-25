@@ -3,9 +3,18 @@
 #
 #   bash slurm/check-deps.sh
 #
-# Read-only and takes seconds, so it is safe on the login node.  Run it there
-# first, then inside a job (`srun --partition=scavenge --pty bash`) if you want
-# to be sure -- login and compute nodes do not always carry the same packages.
+# Read-only and takes seconds, so it is safe on the login node -- but the login
+# node is NOT the answer.  slurmhead carries a full development toolchain and
+# the compute nodes do not: m4 is at /usr/bin/m4 on slurmhead, yet job 130513
+# died on a compute node with GMP's "No usable m4 in $PATH".  What the login
+# node is good for is the module list, which is shared.
+#
+# Run it where the work will actually happen, on each partition you use:
+#
+#   srun -p scavenge        --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
+#   srun -p cores,cores_any --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
+#
+# `bash -lc` matters: a plain non-login shell has no `module` function.
 #
 # Why each entry matters is in the note column: setup.job builds carcara, OCaml
 # and lambdapi from source, so the toolchain needs a working C build
@@ -94,13 +103,25 @@ python3 -c 'import sys, venv; print("  venv module  : ok, python " + ".".join(ma
 
 echo
 echo "--- modules that could supply anything missing ---"
+if ! type module >/dev/null 2>&1; then
+  for init in /etc/profile.d/lmod.sh /etc/profile.d/modules.sh \
+              /usr/share/lmod/lmod/init/bash; do
+    [ -r "$init" ] && . "$init" && break
+  done
+fi
 if type module >/dev/null 2>&1; then
-  for pat in M4 GMP MPFR OpenSSL libev zlib pkgconf pkg-config Python Rust OCaml zstd; do
-    hits="$(module -t avail 2>&1 | grep -i "^$pat" | tr '\n' ' ')"
+  # Each MODULEPATH entry is listed separately, so the same name comes back
+  # several times: sort -u once rather than reading it three times.
+  AVAIL="$(module -t avail 2>&1 | sort -u)"
+  for pat in M4 GMP MPFR OpenSSL libev zlib pkgconf Python Rust OCaml zstd; do
+    hits="$(printf '%s\n' "$AVAIL" | grep -i "^$pat/" | tr '\n' ' ')"
     printf '  %-12s %s\n' "$pat" "${hits:-(none)}"
   done
+  echo
+  echo "  NOTE: libevent is not libev. conf-libev links -lev and accepts"
+  echo "        nothing else, so a libevent module does not help."
 else
-  echo "  no 'module' command in this shell -- source /etc/profile.d/lmod.sh first"
+  echo "  no 'module' command and no lmod init script found in this shell"
 fi
 
 echo
