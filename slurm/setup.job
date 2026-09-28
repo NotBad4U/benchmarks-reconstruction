@@ -228,6 +228,12 @@ fi
 # sandbox uses bubblewrap/user namespaces, which are restricted on most HPC
 # nodes, and without this flag every package build fails.
 export OPAMROOT="$PREFIX/opam"
+# opam carries no `jobs` setting, so package builds run near-serially: job
+# 131045 averaged 0.29 of a core over 20 minutes on a 16-CPU allocation, most
+# of the OCaml compiler build being one `make` at a time.  OPAMJOBS is what
+# feeds the %{jobs}% that opam package build commands expand, so pin it to the
+# allocation -- not to the node, which has 256 cores we were not given.
+export OPAMJOBS="$JOBS"
 OCAML_VERSION="${OCAML_VERSION:-5.2.0}"
 OPAM_VERSION="${OPAM_VERSION:-2.6.0}"
 # Not shell/install.sh.  It accepts no positional install directory -- passing
@@ -247,8 +253,16 @@ opam --version
 if [ ! -d "$OPAMROOT" ]; then
   opam init --bare --disable-sandboxing --no-setup --yes
 fi
-if ! opam switch list --short | grep -qx "$OCAML_VERSION"; then
-  echo "--- building OCaml $OCAML_VERSION (slow, ~15 min) ---"
+# A switch that exists is not necessarily a switch that works: scavenge is
+# preemptible, so a job killed mid-build leaves the name registered with no
+# usable compiler behind it, and the old `switch list` guard would then skip
+# the build and fail somewhere far less obvious.  Ask ocamlc instead.
+if ! opam exec --switch="$OCAML_VERSION" -- ocamlc -version >/dev/null 2>&1; then
+  if opam switch list --short | grep -qx "$OCAML_VERSION"; then
+    echo "--- switch $OCAML_VERSION has no working ocamlc, recreating ---"
+    opam switch remove "$OCAML_VERSION" --yes || true
+  fi
+  echo "--- building OCaml $OCAML_VERSION with $JOBS jobs ---"
   opam switch create "$OCAML_VERSION" --yes
 fi
 eval "$(opam env --switch="$OCAML_VERSION" --set-switch)"
