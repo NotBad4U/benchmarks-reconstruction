@@ -3,12 +3,13 @@
 Two jobs: `setup.job` builds the toolchain and downloads the benchmarks (run it
 once), `benchmark.job` runs the pipeline and copies the results into `$HOME`.
 
-> **Partially executed.** Verified on cn14: cvc5 1.4.0, `module load M4` (1.4.20),
-> carcara 1.1.0 and hyperfine 1.20.0 all build. Job 130513 died for want of
-> `m4`; 130526 died in the GMP step on a `tar -tf | head` pipeline that
-> `pipefail` turned into a silent exit. Everything from the opam switch onwards
-> is still unverified. Run the smoke test below before the real thing, and
-> `slurm/check-deps.sh` before either.
+> **Partially executed.** Verified on the cluster: cvc5 1.4.0, `module load M4`
+> (1.4.20), carcara 1.1.0, hyperfine 1.20.0, and GMP 6.3.0 + libev 4.33 into
+> `$PREFIX`. Three real failures so far — 130513 no `m4`; 130526 a
+> `tar -tf | head` pipeline that `pipefail` turned into a silent exit; 131044
+> opam's `shell/install.sh`, which has no non-interactive form. Everything from
+> the opam switch onwards is still unverified. Run the smoke test below before
+> the real thing, and `slurm/check-deps.sh` before either.
 
 ## 0. Get the repository onto the cluster
 

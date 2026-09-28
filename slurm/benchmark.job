@@ -29,6 +29,10 @@
 
 set -euo pipefail
 
+# See setup.job: the submitting shell's LC_CTYPE=UTF-8 does not exist on Rocky
+# and every child process warns about it.  C is also a stable sort order.
+export LC_ALL=C LANG=C
+
 # ---------------------------------------------------------------------------
 # Toolchain built by setup.job
 # ---------------------------------------------------------------------------

@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+# sbatch inherits the submitting shell's environment, and macOS ssh forwards
+# LC_CTYPE=UTF-8, a locale Rocky does not have: without this every libtool
+# invocation adds a setlocale warning to the log.
+export LC_ALL=C LANG=C
+
 PREFIX="$HOME/bench-toolchain"
 BENCHS="$HOME/benchs"
 export TMPDIR="${TMPDIR:-$HOME/tmp}"
@@ -199,10 +204,17 @@ fi
 # nodes, and without this flag every package build fails.
 export OPAMROOT="$PREFIX/opam"
 OCAML_VERSION="${OCAML_VERSION:-5.2.0}"
+OPAM_VERSION="${OPAM_VERSION:-2.6.0}"
+# Not shell/install.sh.  It accepts no positional install directory -- passing
+# one prints its usage and exits 2, which is how job 131044 died -- and it then
+# *prompts* for the directory, reading the answer with `read` from stdin, which
+# when piped is the script's own text.  There is no non-interactive form.  The
+# release ships a static x86_64 binary, so fetch it exactly like cvc5.
 if [ ! -x "$PREFIX/bin/opam" ]; then
-  echo "--- installing opam ---"
-  curl -fsSL https://raw.githubusercontent.com/ocaml/opam/master/shell/install.sh \
-    | sh -s "$PREFIX/bin" --no-backup
+  echo "--- installing opam $OPAM_VERSION ---"
+  curl -fL --retry 3 -sS -o "$PREFIX/bin/opam" \
+    "https://github.com/ocaml/opam/releases/download/$OPAM_VERSION/opam-$OPAM_VERSION-x86_64-linux"
+  chmod +x "$PREFIX/bin/opam"
 fi
 export PATH="$PREFIX/bin:$PATH"
 opam --version
