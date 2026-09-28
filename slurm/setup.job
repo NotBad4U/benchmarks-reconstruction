@@ -300,6 +300,25 @@ opam option download-jobs=16 --global >/dev/null
 # view decides whether the next `opam install` tries to rebuild the compiler.
 # Job 131045, cancelled mid-install, left the first true and the second false,
 # and job 131055 then rebuilt OCaml when it should have skipped it.
+# opam copies every package's whole source tree into
+# $OPAMROOT/<switch>/.opam-switch/sources/ and builds under .../build/.  Measured
+# on a scavenge node: 300 small files take 8 ms on /scratch and 6600 ms on
+# $HOME's NFS -- 825x.  lambdapi's closure is around two hundred packages of
+# thousands of files each, so both trees go to local disk.  They are throwaway;
+# only lib/ and bin/ have to persist.  Re-point them every run: the node
+# changes, and `opam switch remove` deletes the symlinks with the switch.
+OPAM_SCRATCH="$LOCAL_SCRATCH/opam-build"
+link_transient_trees() {
+  SWITCH_DIR="$OPAMROOT/$OCAML_VERSION/.opam-switch"
+  [ -d "$SWITCH_DIR" ] || return 0
+  for d in sources build; do
+    mkdir -p "$OPAM_SCRATCH/$d"
+    [ -L "$SWITCH_DIR/$d" ] || rm -rf "$SWITCH_DIR/$d"
+    ln -sfn "$OPAM_SCRATCH/$d" "$SWITCH_DIR/$d"
+  done
+  echo "--- opam sources/ and build/ -> $OPAM_SCRATCH ---"
+}
+
 switch_ready() {
   opam list --switch="$OCAML_VERSION" --installed --short ocaml-base-compiler \
     2>/dev/null | grep -q . &&
@@ -310,9 +329,19 @@ if ! switch_ready; then
     echo "--- switch $OCAML_VERSION incomplete, recreating ---"
     opam switch remove "$OCAML_VERSION" --yes || true
   fi
-  echo "--- building OCaml $OCAML_VERSION with $JOBS jobs ---"
-  opam switch create "$OCAML_VERSION" --yes
+  # --empty first, on purpose.  A plain `opam switch create 5.2.0` builds the
+  # compiler inside the switch it is creating, so it lands on $HOME before any
+  # symlink can exist -- that is what left job 131057 compiling OCaml at 0.1 of
+  # a core.  Create, relocate, then install the compiler.
+  opam switch create "$OCAML_VERSION" --empty --yes
+  link_transient_trees
+  echo "--- building OCaml $OCAML_VERSION with $JOBS jobs on $LOCAL_SCRATCH ---"
+  opam install "ocaml-base-compiler.$OCAML_VERSION" --yes
+  # --empty leaves the switch with no invariant, which lets a later solve
+  # propose removing the compiler.  State it explicitly.
+  opam switch set-invariant "ocaml-base-compiler.$OCAML_VERSION" --yes || true
 fi
+link_transient_trees
 eval "$(opam env --switch="$OCAML_VERSION" --set-switch)"
 ocaml -version
 
@@ -328,17 +357,6 @@ ocaml -version
 # the job's time limit.  Both trees are throwaway; only lib/ and bin/ have to
 # persist.  Re-point them every run, because the node changes and yesterday's
 # symlink is today's dangling one.
-SWITCH_DIR="$OPAMROOT/$OCAML_VERSION/.opam-switch"
-OPAM_SCRATCH="$LOCAL_SCRATCH/opam-build"
-if [ -d "$SWITCH_DIR" ]; then
-  for d in sources build; do
-    mkdir -p "$OPAM_SCRATCH/$d"
-    [ -L "$SWITCH_DIR/$d" ] || rm -rf "$SWITCH_DIR/$d"
-    ln -sfn "$OPAM_SCRATCH/$d" "$SWITCH_DIR/$d"
-  done
-  echo "--- opam sources/ and build/ -> $OPAM_SCRATCH ---"
-fi
-
 echo "--- building lambdapi from master ---"
 opam pin add lambdapi https://github.com/deducteam/lambdapi.git#master --yes
 lambdapi --version || true
