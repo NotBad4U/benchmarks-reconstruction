@@ -253,6 +253,11 @@ opam --version
 if [ ! -d "$OPAMROOT" ]; then
   opam init --bare --disable-sandboxing --no-setup --yes
 fi
+# opam fetches three packages at a time by default, and lambdapi's closure --
+# dream and why3 between them -- is around two hundred of them.  Job 131053 sat
+# at 5% of one core for twelve minutes, entirely waiting on the network, roughly
+# 30 seconds per package.  Raise it: this is latency, not bandwidth.
+opam option download-jobs=16 --global >/dev/null
 # A switch that exists is not necessarily a switch that works: scavenge is
 # preemptible, so a job killed mid-build leaves the name registered with no
 # usable compiler behind it, and the old `switch list` guard would then skip
