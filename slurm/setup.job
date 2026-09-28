@@ -29,7 +29,24 @@ export LC_ALL=C LANG=C
 
 PREFIX="$HOME/bench-toolchain"
 BENCHS="$HOME/benchs"
-export TMPDIR="${TMPDIR:-$HOME/tmp}"
+# Everything transient goes to node-local disk.  $HOME is NFS with no infiniband
+# link, and the only things that have to survive a job are the installed
+# toolchain ($PREFIX/bin, the opam switch's lib/ and bin/) and the benchmarks.
+# Unpacking and compiling there instead cost job 131053 one to three minutes per
+# opam package at ~0% CPU.  /tmp on these nodes has tens of GB free; the whole
+# toolchain is about 1 GB.
+for candidate in "/scratch/$USER" "/tmp/$USER"; do
+  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ]; then
+    LOCAL_SCRATCH="$candidate"; break
+  fi
+done
+LOCAL_SCRATCH="${LOCAL_SCRATCH:-$HOME/tmp}"
+export TMPDIR="$LOCAL_SCRATCH/tmp"
+# cargo writes tens of thousands of object files; the binary it produces is
+# installed into $PREFIX/bin, so the target tree need not persist.
+export CARGO_TARGET_DIR="$LOCAL_SCRATCH/cargo-target"
+mkdir -p "$TMPDIR" "$CARGO_TARGET_DIR"
+echo "=== scratch: $LOCAL_SCRATCH ==="
 mkdir -p "$PREFIX/bin" "$TMPDIR" "$BENCHS"
 
 echo "=== node: $(hostname)  cores: ${SLURM_CPUS_PER_TASK:-1} ==="
@@ -286,20 +303,14 @@ ocaml -version
 # persist.  Re-point them every run, because the node changes and yesterday's
 # symlink is today's dangling one.
 SWITCH_DIR="$OPAMROOT/$OCAML_VERSION/.opam-switch"
-for candidate in "/scratch/$USER" "/tmp/$USER"; do
-  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ]; then
-    OPAM_SCRATCH="$candidate/opam-build"; break
-  fi
-done
-if [ -n "${OPAM_SCRATCH:-}" ] && [ -d "$SWITCH_DIR" ]; then
+OPAM_SCRATCH="$LOCAL_SCRATCH/opam-build"
+if [ -d "$SWITCH_DIR" ]; then
   for d in sources build; do
     mkdir -p "$OPAM_SCRATCH/$d"
     [ -L "$SWITCH_DIR/$d" ] || rm -rf "$SWITCH_DIR/$d"
     ln -sfn "$OPAM_SCRATCH/$d" "$SWITCH_DIR/$d"
   done
   echo "--- opam sources/ and build/ -> $OPAM_SCRATCH ---"
-else
-  echo "--- no node-local scratch found, opam will unpack into \$HOME (slow) ---"
 fi
 
 echo "--- building lambdapi from master ---"
