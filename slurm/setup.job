@@ -353,7 +353,18 @@ echo "--- alethe.core resolves ---"
 # 5. Benchmarks (QF_UF and UF by default)
 # ---------------------------------------------------------------------------
 cd "$SLURM_SUBMIT_DIR"
-BENCHS_DIR="$BENCHS" bash download_benchs.sh
+# Default to both, but allow one logic: extracting a logic is tens of thousands
+# of small files into $HOME, which is the slowest thing this script does, and a
+# QF_UF-only run has no use for UF.
+#
+#   sbatch --export=ALL,BENCH_LOGICS=QF_UF slurm/setup.job
+#
+# download_benchs.sh skips a logic whose directory already exists, so adding UF
+# later is just another run of this job.
+BENCH_LOGICS="${BENCH_LOGICS:-QF_UF UF}"
+echo "--- downloading benchmarks: $BENCH_LOGICS ---"
+# shellcheck disable=SC2086
+BENCHS_DIR="$BENCHS" bash download_benchs.sh $BENCH_LOGICS
 du -sh "$BENCHS"/* 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
