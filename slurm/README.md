@@ -231,24 +231,29 @@ Other levers, in order of effort:
 
 1. ~~`module load Python/3.12.3-GCCcore-13.3.0`~~ — confirmed present on the
    cluster. (3.13.1 is also available if you want it.)
-2. **`/scratch` may not exist**, or not be writable. The job falls back to
+2. **The compute nodes are not uniform.** cn14 has `git` and `m4`; cn8 has
+   neither. `setup.job` resolves both through `ensure_tool` (module, else a
+   source build for m4) and now fails in the first seconds when it cannot,
+   instead of a quarter of an hour into the OCaml build. `check-deps.sh` is
+   worth running per partition for the same reason.
+3. **`/scratch` may not exist**, or not be writable. The job falls back to
    `$TMPDIR` then `/tmp/$USER`, and prints which it picked.
-3. **`opam switch create 5.2.0`** builds OCaml from source, ~15 minutes. If
+4. **`opam switch create 5.2.0`** builds OCaml from source, ~15 minutes. If
    lambdapi master requires a different compiler, set `OCAML_VERSION`.
-4. **The Lambdapi libraries must land where lambdapi looks.** It finds its
+5. **The Lambdapi libraries must land where lambdapi looks.** It finds its
    library root through `OPAM_SWITCH_PREFIX`; without that it falls back to
    `/usr/local/lib/lambdapi/lib_root` and finds nothing, not even `Stdlib`.
    `setup.job` now fails loudly if `alethe.core` does not resolve.
-5. ~~**`m4` is absent on the compute nodes**~~ — hit for real: carcara depends
+6. ~~**`m4` is absent on the compute nodes**~~ — hit for real: carcara depends
    on `rug` -> `gmp-mpfr-sys`, which builds GMP from source, and GMP's
    `configure` dies with `No usable m4 in $PATH`. `setup.job` now loads an `M4`
    module if the cluster has one and otherwise builds m4 1.4.19 into
    `$PREFIX` before touching cargo.
-6. **`why3` and `dream` are the unverified part.** lambdapi master depends on
+7. **`why3` and `dream` are the unverified part.** lambdapi master depends on
    both, which is where libgmp and libev come from; nothing past the opam
    switch has run on the cluster yet. If `conf-libev` still fails, its error
    names the two variables it wants — check `env.sh` exported them.
-7. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
+8. **`PROOF_GRANULARITY`** is forced to `theory-rewrite`. With cvc5's
    `dsl-rewrite` (the `config.env` default) carcara needs a RARE database via
    `--rare-file`, which is not shipped — every elaboration fails. If you get a
    RARE file, set `PROOF_GRANULARITY=dsl-rewrite` and pass it through.

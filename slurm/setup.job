@@ -36,6 +36,36 @@ echo "=== node: $(hostname)  cores: ${SLURM_CPUS_PER_TASK:-1} ==="
 JOBS="${SLURM_CPUS_PER_TASK:-4}"
 
 # ---------------------------------------------------------------------------
+# 0. Tools the compute nodes do not consistently have
+# ---------------------------------------------------------------------------
+# The nodes are not uniform.  cn14 has git and m4; cn8 has neither.  That cost
+# two jobs: 130513 died for want of m4, and on cn8 job 131045's
+# `git -C ... pull || true` silently did nothing while opam announced "you
+# won't be able to use git repositories" -- which would have killed the
+# lambdapi pin a quarter of an hour later, after the OCaml build.
+#
+# So resolve the tools up front and stop here if one cannot be had.
+ensure_tool() {  # binary module-name... -- true if $binary ends up on PATH
+  bin="$1"; shift
+  command -v "$bin" >/dev/null 2>&1 && return 0
+  for mod in "$@"; do
+    if module load "$mod" >/dev/null 2>&1 && command -v "$bin" >/dev/null 2>&1; then
+      echo "--- loaded module $mod for $bin ---"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# git is needed three times: the carcara and lambdapi-stdlib clones, and the
+# `opam pin` on lambdapi's master branch.
+ensure_tool git git Git || {
+  echo "ERROR: no git on $(hostname) and no git module would provide one" >&2
+  exit 1
+}
+git --version
+
+# ---------------------------------------------------------------------------
 # 1. cvc5
 # ---------------------------------------------------------------------------
 # NOTE: cvc5 is NOT on conda-forge (the package does not exist), and there is
@@ -80,7 +110,7 @@ if [ ! -d "$CARCARA_SRC" ]; then
   mkdir -p "$PREFIX/src"
   git clone --branch lambdapi-refactor https://github.com/NotBad4U/carcara "$CARCARA_SRC"
 fi
-git -C "$CARCARA_SRC" pull --ff-only || true
+git -C "$CARCARA_SRC" pull --ff-only || echo "--- carcara pull skipped (not fast-forwardable) ---"
 
 # carcara depends on rug -> gmp-mpfr-sys, which builds GMP from source, and
 # GMP's configure aborts with "No usable m4 in $PATH" when m4 is missing -- it
@@ -88,12 +118,7 @@ git -C "$CARCARA_SRC" pull --ff-only || true
 # Prefer a site module; otherwise build it here: a two-minute autotools build
 # whose only dependency is the C compiler cargo is already using.
 export PATH="$PREFIX/bin:$PATH"
-if ! command -v m4 >/dev/null 2>&1; then
-  for mod in M4 m4; do
-    module load "$mod" >/dev/null 2>&1 && break
-  done
-fi
-if ! command -v m4 >/dev/null 2>&1; then
+if ! ensure_tool m4 M4 m4; then
   echo "--- no m4 on PATH and no m4 module, building it from source ---"
   M4_VERSION="${M4_VERSION:-1.4.19}"
   (
