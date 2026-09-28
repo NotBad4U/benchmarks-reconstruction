@@ -152,18 +152,24 @@ have_header() {  # header -- true if cc can already find it
 install_c_lib() {  # label url configure-args...
   label="$1"; url="$2"; shift 2
   tarball="${url##*/}"
+  build="$TMPDIR/build-${tarball%%.tar*}"
   echo "--- building $label into $PREFIX ---"
   (
     cd "$TMPDIR"
-    curl -fL --retry 3 -o "$tarball" "$url"
-    dir="$(tar -tf "$tarball" | head -1 | cut -d/ -f1)"
-    rm -rf "$dir" && tar -xf "$tarball"
-    cd "$dir"
+    curl -fL --retry 3 -sS -o "$tarball" "$url"
+    # Do NOT learn the top-level directory with `tar -tf "$tarball" | head -1`:
+    # GNU tar's decompression child dies when head closes the pipe, and under
+    # `set -o pipefail` that kills the whole job without printing anything.
+    # Job 130526 died exactly there, right after the download.  Extract into a
+    # private directory and use its single child instead.
+    rm -rf "$build" && mkdir -p "$build"
+    tar -xf "$tarball" -C "$build"
+    cd "$build"/*/
     ./configure --prefix="$PREFIX" "$@"
     make -j"$JOBS"
     make install
   )
-  rm -rf "$TMPDIR/$tarball"
+  rm -rf "$build" "$TMPDIR/$tarball"
 }
 
 # --with-pic on both: OCaml links these into C stubs, and a non-PIC static
