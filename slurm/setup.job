@@ -82,6 +82,22 @@ ensure_tool git git Git || {
 }
 git --version
 
+# A module can swap the compiler without swapping the assembler.  git/2.49.0
+# pulls GCCcore/14.2.0, whose gcc passes `--gdwarf-5` to as, and Rocky 8's
+# system as (binutils 2.30) rejects it: job 131055 died exactly there, building
+# OCaml's runtime.  Pin CC/CXX to the system compiler, which matches the system
+# assembler, and prove the pair works before anything long-running depends on
+# it.  -g matters in the probe: that is when gcc emits the offending option.
+export CC="${CC:-/usr/bin/gcc}" CXX="${CXX:-/usr/bin/g++}"
+printf 'int main(void){return 0;}\n' > "$TMPDIR/cc-probe.c"
+if ! "$CC" -g "$TMPDIR/cc-probe.c" -o "$TMPDIR/cc-probe" 2>"$TMPDIR/cc-probe.err"; then
+  echo "ERROR: $CC cannot build a debug hello world -- compiler/assembler mismatch:" >&2
+  cat "$TMPDIR/cc-probe.err" >&2
+  exit 1
+fi
+rm -f "$TMPDIR/cc-probe.c" "$TMPDIR/cc-probe" "$TMPDIR/cc-probe.err"
+echo "--- cc: $CC ($("$CC" -dumpversion)), as: $(command -v as) ---"
+
 # ---------------------------------------------------------------------------
 # 1. cvc5
 # ---------------------------------------------------------------------------
@@ -279,9 +295,19 @@ opam option download-jobs=16 --global >/dev/null
 # preemptible, so a job killed mid-build leaves the name registered with no
 # usable compiler behind it, and the old `switch list` guard would then skip
 # the build and fail somewhere far less obvious.  Ask ocamlc instead.
-if ! opam exec --switch="$OCAML_VERSION" -- ocamlc -version >/dev/null 2>&1; then
+# Both halves matter.  ocamlc answering proves the files are there; opam
+# listing ocaml-base-compiler as installed proves opam agrees -- and only opam's
+# view decides whether the next `opam install` tries to rebuild the compiler.
+# Job 131045, cancelled mid-install, left the first true and the second false,
+# and job 131055 then rebuilt OCaml when it should have skipped it.
+switch_ready() {
+  opam list --switch="$OCAML_VERSION" --installed --short ocaml-base-compiler \
+    2>/dev/null | grep -q . &&
+  opam exec --switch="$OCAML_VERSION" -- ocamlc -version >/dev/null 2>&1
+}
+if ! switch_ready; then
   if opam switch list --short | grep -qx "$OCAML_VERSION"; then
-    echo "--- switch $OCAML_VERSION has no working ocamlc, recreating ---"
+    echo "--- switch $OCAML_VERSION incomplete, recreating ---"
     opam switch remove "$OCAML_VERSION" --yes || true
   fi
   echo "--- building OCaml $OCAML_VERSION with $JOBS jobs ---"
