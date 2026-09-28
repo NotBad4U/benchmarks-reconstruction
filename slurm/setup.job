@@ -363,7 +363,7 @@ lambdapi --version || true
 
 # ---------------------------------------------------------------------------
 # 4. The Lambdapi libraries the translated proofs `require`, in order:
-#      Stdlib  <- NotBad4U/lambdapi-stdlib
+#      Stdlib  <- NotBad4U/lambdapi-stdlib, branch quotient (see below)
 #      alethe  <- carcara's own alethe-lp/   (alethe.core, alethe.prop, ...)
 # ---------------------------------------------------------------------------
 # alethe-lp requires Stdlib.HOL, Stdlib.Z, Stdlib.List, ... so Stdlib must be
@@ -371,12 +371,36 @@ lambdapi --version || true
 # Both land in the lib_root of the opam switch loaded above; lambdapi only
 # finds that root because OPAM_SWITCH_PREFIX is set (by `opam env`).  Without
 # it lambdapi falls back to /usr/local/lib/lambdapi/lib_root and finds nothing.
-if [ ! -d "$PREFIX/src/lambdapi-stdlib" ]; then
+# The branch matters.  `master` installs cleanly but its Prop.lp defines the
+# connectives differently from what alethe-lp expects, and job 131060 died on
+# core.lp with "(?8 <=> ?8) = TOP is not unifiable with (q => q) /\ (q => q)".
+# `quotient` is the branch the working local toolchain was built from -- every
+# installed Stdlib/*.lp there matches it byte for byte.
+STDLIB_REPO="${STDLIB_REPO:-https://github.com/NotBad4U/lambdapi-stdlib}"
+STDLIB_REF="${STDLIB_REF:-quotient}"
+STDLIB_SRC="$PREFIX/src/lambdapi-stdlib"
+if [ ! -d "$STDLIB_SRC" ]; then
   mkdir -p "$PREFIX/src"
-  git clone https://github.com/NotBad4U/lambdapi-stdlib "$PREFIX/src/lambdapi-stdlib"
+  git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"
+else
+  # A build clone, so take the remote's word for it: an earlier run may have
+  # left this on a different branch, and `pull --ff-only` cannot cross branches.
+  git -C "$STDLIB_SRC" remote set-url origin "$STDLIB_REPO"
+  git -C "$STDLIB_SRC" fetch origin --prune
+  git -C "$STDLIB_SRC" checkout -B "$STDLIB_REF" "origin/$STDLIB_REF"
+  git -C "$STDLIB_SRC" reset --hard "origin/$STDLIB_REF"
 fi
-git -C "$PREFIX/src/lambdapi-stdlib" pull --ff-only || true
-make -C "$PREFIX/src/lambdapi-stdlib" install
+echo "--- lambdapi-stdlib: $STDLIB_REF $(git -C "$STDLIB_SRC" rev-parse --short HEAD) ---"
+
+# .lpo files are compiled artifacts of whichever branch was checked out before,
+# and lambdapi will happily load a stale one.  Drop them, and drop what a
+# previous run installed, so nothing from master survives into this switch.
+git -C "$STDLIB_SRC" clean -xfd >/dev/null
+git -C "$CARCARA_SRC" clean -xfd alethe-lp >/dev/null
+LP_LIB_ROOT="$OPAM_SWITCH_PREFIX/lib/lambdapi/lib_root"
+rm -rf "$LP_LIB_ROOT/Stdlib" "$LP_LIB_ROOT/alethe"
+
+make -C "$STDLIB_SRC" install
 
 make -C "$CARCARA_SRC/alethe-lp" install
 
