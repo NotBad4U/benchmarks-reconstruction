@@ -97,6 +97,14 @@ literally what conf-libev's `discover.ml` probes.
 naming them: `dodo.py` reimplements both, and `download_benchs.sh` falls back to
 `find`.
 
+opam's `sources/` and `build/` trees are symlinked to node-local disk. opam
+copies every package's full source tree into the switch before building it, and
+lambdapi's closure is around two hundred packages: on `$HOME` that measured one
+to three minutes *per package* at ~0% CPU — NFS metadata latency, the same
+reason the benchmark itself runs on scratch. Both trees are throwaway; only
+`lib/` and `bin/` persist. The symlinks are re-pointed every run, since the node
+changes.
+
 `opam init` is run with **`--disable-sandboxing`**. opam's sandbox uses
 bubblewrap and user namespaces, which are restricted on most HPC nodes; without
 that flag every package build fails.

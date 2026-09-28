@@ -273,6 +273,35 @@ fi
 eval "$(opam env --switch="$OCAML_VERSION" --set-switch)"
 ocaml -version
 
+# ---------------------------------------------------------------------------
+# opam's transient trees belong on node-local disk
+# ---------------------------------------------------------------------------
+# opam copies every package's whole source tree into
+# $OPAMROOT/<switch>/.opam-switch/sources/ and builds under .../build/.  For
+# lambdapi's closure -- around two hundred packages once dream and why3 are
+# resolved -- that is thousands of small files per package written to $HOME,
+# which is NFS with no infiniband link.  Measured on job 131053: one to three
+# minutes per package at ~0% CPU, pure metadata latency, which does not fit in
+# the job's time limit.  Both trees are throwaway; only lib/ and bin/ have to
+# persist.  Re-point them every run, because the node changes and yesterday's
+# symlink is today's dangling one.
+SWITCH_DIR="$OPAMROOT/$OCAML_VERSION/.opam-switch"
+for candidate in "/scratch/$USER" "/tmp/$USER"; do
+  if mkdir -p "$candidate" 2>/dev/null && [ -w "$candidate" ]; then
+    OPAM_SCRATCH="$candidate/opam-build"; break
+  fi
+done
+if [ -n "${OPAM_SCRATCH:-}" ] && [ -d "$SWITCH_DIR" ]; then
+  for d in sources build; do
+    mkdir -p "$OPAM_SCRATCH/$d"
+    [ -L "$SWITCH_DIR/$d" ] || rm -rf "$SWITCH_DIR/$d"
+    ln -sfn "$OPAM_SCRATCH/$d" "$SWITCH_DIR/$d"
+  done
+  echo "--- opam sources/ and build/ -> $OPAM_SCRATCH ---"
+else
+  echo "--- no node-local scratch found, opam will unpack into \$HOME (slow) ---"
+fi
+
 echo "--- building lambdapi from master ---"
 opam pin add lambdapi https://github.com/deducteam/lambdapi.git#master --yes
 lambdapi --version || true
