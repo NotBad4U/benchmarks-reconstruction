@@ -363,7 +363,7 @@ lambdapi --version || true
 
 # ---------------------------------------------------------------------------
 # 4. The Lambdapi libraries the translated proofs `require`, in order:
-#      Stdlib  <- NotBad4U/lambdapi-stdlib, branch quotient (see below)
+#      Stdlib  <- Deducteam/lambdapi-stdlib, branch master (see below)
 #      alethe  <- carcara's own alethe-lp/   (alethe.core, alethe.prop, ...)
 # ---------------------------------------------------------------------------
 # alethe-lp requires Stdlib.HOL, Stdlib.Z, Stdlib.List, ... so Stdlib must be
@@ -371,26 +371,54 @@ lambdapi --version || true
 # Both land in the lib_root of the opam switch loaded above; lambdapi only
 # finds that root because OPAM_SWITCH_PREFIX is set (by `opam env`).  Without
 # it lambdapi falls back to /usr/local/lib/lambdapi/lib_root and finds nothing.
-# The branch matters.  `master` installs cleanly but its Prop.lp defines the
-# connectives differently from what alethe-lp expects, and job 131060 died on
-# core.lp with "(?8 <=> ?8) = TOP is not unifiable with (q => q) /\ (q => q)".
-# `quotient` is the branch the working local toolchain was built from -- every
-# installed Stdlib/*.lp there matches it byte for byte.
-STDLIB_REPO="${STDLIB_REPO:-https://github.com/NotBad4U/lambdapi-stdlib}"
-STDLIB_REF="${STDLIB_REF:-quotient}"
+# Upstream Deducteam, whose only branch is master -- there is no branch to pick.
+# The previous pin here, NotBad4U/lambdapi-stdlib#quotient, named a branch that
+# does not exist on either remote (NotBad4U has `quotient-type`), so the clone
+# below could only ever have failed; and its stated reason was wrong too.  The
+# Stdlib installed in the working local switch matches NotBad4U *master* byte
+# for byte -- Prop.lp included -- not any quotient branch.
+#
+# So job 131060's "(?8 <=> ?8) = TOP is not unifiable with (q => q) /\ (q => q)"
+# on alethe's core.lp was not a branch problem.  The local switch that compiles
+# that same core.lp runs lambdapi 2.3.1, while this job pins lambdapi master;
+# the connectives Prop.lp builds on moved between the two.  If core.lp fails
+# the probe below again, pin lambdapi, not Stdlib.
+#
+# SSH, as asked.  It needs a key the compute node can read and github.com in
+# known_hosts; the repo is public, so when the clone fails for want of either,
+# fall back to https rather than losing the job after the OCaml build.
+#
+# BatchMode=yes is what makes that fallback reachable: without it ssh prompts
+# for a passphrase or a host-key confirmation and an sbatch job, whose stdin is
+# /dev/null, waits on a prompt nobody will answer until the time limit.
+export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15}"
+export GIT_TERMINAL_PROMPT=0
+STDLIB_REPO="${STDLIB_REPO:-git@github.com:Deducteam/lambdapi-stdlib.git}"
+STDLIB_REF="${STDLIB_REF:-master}"
+STDLIB_HTTPS_FALLBACK="${STDLIB_HTTPS_FALLBACK:-https://github.com/Deducteam/lambdapi-stdlib}"
 STDLIB_SRC="$PREFIX/src/lambdapi-stdlib"
 if [ ! -d "$STDLIB_SRC" ]; then
   mkdir -p "$PREFIX/src"
-  git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"
+  if ! git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"; then
+    echo "--- $STDLIB_REPO unreachable (no ssh key on $(hostname)?), using https ---"
+    rm -rf "$STDLIB_SRC"
+    STDLIB_REPO="$STDLIB_HTTPS_FALLBACK"
+    git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"
+  fi
 else
   # A build clone, so take the remote's word for it: an earlier run may have
   # left this on a different branch, and `pull --ff-only` cannot cross branches.
   git -C "$STDLIB_SRC" remote set-url origin "$STDLIB_REPO"
-  git -C "$STDLIB_SRC" fetch origin --prune
+  if ! git -C "$STDLIB_SRC" fetch origin --prune; then
+    echo "--- $STDLIB_REPO unreachable, refetching over https ---"
+    STDLIB_REPO="$STDLIB_HTTPS_FALLBACK"
+    git -C "$STDLIB_SRC" remote set-url origin "$STDLIB_REPO"
+    git -C "$STDLIB_SRC" fetch origin --prune
+  fi
   git -C "$STDLIB_SRC" checkout -B "$STDLIB_REF" "origin/$STDLIB_REF"
   git -C "$STDLIB_SRC" reset --hard "origin/$STDLIB_REF"
 fi
-echo "--- lambdapi-stdlib: $STDLIB_REF $(git -C "$STDLIB_SRC" rev-parse --short HEAD) ---"
+echo "--- lambdapi-stdlib: $STDLIB_REPO $STDLIB_REF $(git -C "$STDLIB_SRC" rev-parse --short HEAD) ---"
 
 # .lpo files are compiled artifacts of whichever branch was checked out before,
 # and lambdapi will happily load a stale one.  Drop them, and drop what a

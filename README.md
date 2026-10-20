@@ -43,7 +43,7 @@ You also need `cvc5`, `carcara` (`NotBad4U/carcara`, branch
 `lambdapi-refactor`) and `hyperfine` on `PATH`, plus `lambdapi` with two
 libraries installed, in this order:
 
-1. `Stdlib` — `make install` in `NotBad4U/lambdapi-stdlib`
+1. `Stdlib` — `make install` in `Deducteam/lambdapi-stdlib` (`master`)
 2. `alethe` — `make install` in carcara's `alethe-lp/`
 
 **Load opam's environment first** (`eval "$(opam env)"`), both for the
