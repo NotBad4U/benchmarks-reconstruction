@@ -113,7 +113,9 @@ if type module >/dev/null 2>&1; then
   # Each MODULEPATH entry is listed separately, so the same name comes back
   # several times: sort -u once rather than reading it three times.
   AVAIL="$(module -t avail 2>&1 | sort -u)"
-  for pat in M4 GMP MPFR OpenSSL libev zlib pkgconf Python Rust OCaml zstd; do
+  # git first: it is the only entry whose absence makes setup.job exit
+  # immediately, and it tries `module load git` then `Git` before doing so.
+  for pat in git Git M4 GMP MPFR OpenSSL libev zlib pkgconf Python Rust OCaml zstd; do
     hits="$(printf '%s\n' "$AVAIL" | grep -i "^$pat/" | tr '\n' ' ')"
     printf '  %-12s %s\n' "$pat" "${hits:-(none)}"
   done
