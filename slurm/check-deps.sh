@@ -12,7 +12,10 @@
 # Run it where the work will actually happen, on each partition you use:
 #
 #   srun -p scavenge        --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
-#   srun -p cores,cores_any --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
+#   srun -p cores           --time=00:05:00 --mem=2G bash -lc 'bash slurm/check-deps.sh'
+#
+# One partition per srun: this account's association has a partition set,
+# and SLURM then rejects `-p cores,cores_any` outright.
 #
 # `bash -lc` matters: a plain non-login shell has no `module` function.
 #

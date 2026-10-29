@@ -5,7 +5,7 @@
 #SBATCH --time=2-00:00:00
 #SBATCH --cpus-per-task=32
 #SBATCH --mem=64G
-#SBATCH --partition=cores,cores_any
+#SBATCH --partition=cores
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=alecol@itu.dk
 #
@@ -17,15 +17,20 @@
 #
 # Requires slurm/setup.job to have run once.
 #
-# Both `cores` and `cores_any` are requested because the ITU docs say so
-# explicitly: cores_any is spare cores on the GPU nodes, and asking for both
-# roughly doubles the set of nodes that can start this job.
+# One partition, not `cores,cores_any` as the ITU docs suggest: this account's
+# association has a partition set, and in that configuration SLURM rejects any
+# request naming more than one --
+#   "Multiple partition job request not supported when a partition is set in
+#    the association"
+# -- at submit time, before the job exists.  `cores` is the dedicated CPU
+# partition.  `cores_any` (spare cores on the GPU nodes, 32+ each) is the
+# alternative when `cores` is busy:
 #
-# 32 cores / 64 GB is deliberate. Per sinfo, `cores` nodes have 40+ cores and
-# `cores_any` nodes have 32+, so 32 is the largest request that still fits
-# every node in both partitions -- asking for 40 would exclude the nine
-# cores_any nodes and buy 25% more cores at the cost of a longer wait. Both
-# partitions have 120 GB+, so memory is not the binding constraint.
+#   sbatch --partition=cores_any slurm/benchmark.job
+#
+# 32 cores / 64 GB: per sinfo every `cores` node has 40+ cores and 120 GB+, so
+# 32 fits them all and also fits every `cores_any` node if you switch.  Memory
+# is not the binding constraint.
 
 set -euo pipefail
 
@@ -105,12 +110,45 @@ export PROOF_GRANULARITY="${PROOF_GRANULARITY:-theory-rewrite}"
 
 NPROC="${SLURM_CPUS_PER_TASK:-8}"
 
-echo "=== pipeline ==="
+# Under sbatch stdout is a file, so Python block-buffers it and doit's task
+# lines surface a few hundred at a time.  Job 169046 printed "=== pipeline ==="
+# and then nothing for an hour while sstat showed six CPU-hours consumed.
+export PYTHONUNBUFFERED=1
+
+# And doit's lines carry no clock.  So, every PROGRESS_EVERY seconds, one line
+# with a timestamp and the count of *finished* records per stage -- status/
+# holds one JSON per (stage, stem), written when the task ends -- plus how many
+# of them did not end in "done".  The stage order is the pipeline order, so
+# the column that is still growing is the stage the run is in.
+TOTAL=$(find "$BENCH_DIR" -name '*.smt2' | wc -l | tr -d ' ')
+progress_line() {
+  line="=== $(date +%H:%M)"
+  for stage in cvc5 elaborate translate_small translate_large \
+               lambdapi_small_check lambdapi_large_check; do
+    d="$JOB_DIR/status/$stage"
+    [ -d "$d" ] || continue
+    n=$(find "$d" -name '*.json' | wc -l | tr -d ' ')
+    bad=$(grep -rL '"status": "done"' --include='*.json' "$d" | wc -l | tr -d ' ')
+    line="$line  $stage $n"
+    if [ "$bad" -gt 0 ]; then line="$line (${bad} not done)"; fi
+  done
+  echo "$line"
+}
+progress_ticker() {
+  while :; do sleep "${PROGRESS_EVERY:-300}"; progress_line; done
+}
+
+echo "=== pipeline === $(date +%H:%M)  $TOTAL benchmarks, progress every ${PROGRESS_EVERY:-300}s"
+progress_ticker &
+PROGRESS_PID=$!
 # One invocation.  Stages 0-2 use every core.  The timed checks are
 # serialised inside dodo.py (one_check_at_a_time), because a timing taken
 # while other checks fight for the same cores measures the load, not
 # lambdapi -- so -n does not distort the numbers that get reported.
 doit -n "$NPROC" --parallel-type thread
+kill "$PROGRESS_PID" 2>/dev/null || true
+progress_line
+echo "=== pipeline done === $(date +%H:%M)"
 
 # ---------------------------------------------------------------------------
 # Copy results into $HOME

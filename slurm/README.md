@@ -128,7 +128,7 @@ it produces `~/benchmark-results/<jobid>/summary.txt`, the pipeline works.
 sbatch slurm/benchmark.job
 ```
 
-Defaults: `--partition=cores,cores_any`, 32 cores, 64 GB, 2 days, QF_UF + UF.
+Defaults: `--partition=cores`, 32 cores, 64 GB, 2 days, QF_UF + UF.
 One logic only:
 
 ```bash
@@ -146,9 +146,14 @@ sbatch --export=ALL,SKIP_LARGE=1 slurm/benchmark.job
 alone would pass *only* that variable. The setting is recorded in the run's
 `run-info.txt`.
 
-The ITU docs say explicitly that a CPU-only job should request **both** `cores`
-and `cores_any` — `cores_any` is spare cores on the GPU nodes, so asking for
-both roughly doubles the set of nodes that can start you.
+The ITU docs say a CPU-only job should request **both** `cores` and
+`cores_any`. **That does not work on this account**: the association has a
+partition set, and SLURM then rejects any multi-partition request at submit
+time with `Multiple partition job request not supported when a partition is
+set in the association`. So the job names `cores` alone. `cores_any` is spare
+cores on the GPU nodes (nine nodes, 32+ cores each); if `cores` is busy, switch
+with `sbatch --partition=cores_any slurm/benchmark.job` — 32 cores fits there
+too.
 
 Stages 0–2 run on all cores; **stage 3 runs serially on purpose**, because
 hyperfine times it and a timing taken while 31 sibling checks fight for the
@@ -202,11 +207,11 @@ list `cores` as cn[8,14-15], but it is actually six nodes):
 
 `+` is a minimum: the partition contains nodes with at least that much.
 
-**The job asks for 32 cores and 64 GB on purpose.** 32 is the largest request
-that still fits every node in *both* `cores` and `cores_any`; asking for 40
-would fit `cores` but exclude the nine `cores_any` nodes, so you would wait
-longer for 25% more cores. On a two-day job that is a bad trade. If the queue
-is empty and you want the bigger nodes:
+**The job asks for 32 cores and 64 GB on purpose.** Every `cores` node has
+40+, so 32 fits them all — and it also fits every `cores_any` node, which keeps
+`--partition=cores_any` a drop-in alternative. Asking for 40 would still fit
+`cores` but close off that fallback. If the queue is empty and you want the
+bigger nodes:
 
 ```bash
 sbatch --cpus-per-task=40 --partition=cores slurm/benchmark.job
