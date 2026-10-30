@@ -253,6 +253,14 @@ def status_path(stage: str, stem: str) -> Path:
     return STATUS / stage / f"{stem}.json"
 
 
+def doit_name(stem: str) -> str:
+    """doit rejects '=' in a task name, and the TPTP-derived benchmarks are
+    named like LIA/tptp/ARI004=1.  Percent-encode it in the name only: files,
+    records and reports keep the real stem.  '%' is escaped first so two
+    different stems can never map to the same name."""
+    return stem.replace("%", "%25").replace("=", "%3D")
+
+
 @functools.lru_cache(maxsize=None)
 def tool_version(tool: str) -> str:
     """`<tool> --version` without the leading tool name, e.g. carcara's
@@ -390,7 +398,7 @@ def task_gen_proof():
     for src in sorted(_iter_benchmarks()):
         stem = str(src.relative_to(BENCH_DIR).with_suffix(""))
         yield {
-            "name": stem,
+            "name": doit_name(stem),
             "actions": [(do_gen_proof, [stem])],
             "file_dep": [str(src)],
             "targets": [str(status_path("cvc5", stem))],
@@ -439,7 +447,7 @@ def task_elaborate():
         if not problem.exists():
             continue
         yield {
-            "name": stem,
+            "name": doit_name(stem),
             "actions": [(do_elaborate, [stem])],
             "file_dep": [str(proof), str(problem)],
             "targets": [str(status_path("elaborate", stem))],
@@ -505,7 +513,7 @@ def task_translate():
         stage = "translate_small" if small else "translate_large"
         action = do_translate_small if small else do_translate_large
         yield {
-            "name": stem,
+            "name": doit_name(stem),
             "actions": [(action, [stem])],
             "file_dep": [str(elab), str(problem)],
             "targets": [str(status_path(stage, stem))],
@@ -589,7 +597,7 @@ def task_check():
     for lp in sorted(SMALL.rglob("*.lp")):
         stem = str(lp.relative_to(SMALL).with_suffix(""))
         yield {
-            "name": f"small/{stem}",
+            "name": f"small/{doit_name(stem)}",
             "actions": [(do_check_small, [stem])],
             "file_dep": [str(lp)],
             "targets": [str(status_path("lambdapi_small_check", stem))],
@@ -604,7 +612,7 @@ def task_check():
     for lp in large:
         stem = str(lp.relative_to(LARGE).with_suffix(""))
         yield {
-            "name": f"large/{stem}",
+            "name": f"large/{doit_name(stem)}",
             "actions": [(do_check_large, [stem])],
             "file_dep": [str(lp)],
             "targets": [str(status_path("lambdapi_large_check", stem))],
