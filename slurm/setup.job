@@ -75,7 +75,7 @@ ensure_tool() {  # binary module-name... -- true if $binary ends up on PATH
 }
 
 # git is needed three times: the carcara and lambdapi-stdlib clones, and the
-# `opam pin` on lambdapi's master branch.
+# `opam pin` on lambdapi's git repository.
 ensure_tool git git Git || {
   echo "ERROR: no git on $(hostname) and no git module would provide one" >&2
   exit 1
@@ -254,7 +254,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# 3. opam + OCaml + lambdapi (deducteam/lambdapi, master)
+# 3. opam + OCaml + lambdapi (deducteam/lambdapi, at LAMBDAPI_REF)
 # ---------------------------------------------------------------------------
 # opam is not installed on the cluster, so fetch the single static opam binary
 # and build a private switch.  --disable-sandboxing is REQUIRED: opam's
@@ -357,13 +357,20 @@ ocaml -version
 # the job's time limit.  Both trees are throwaway; only lib/ and bin/ have to
 # persist.  Re-point them every run, because the node changes and yesterday's
 # symlink is today's dangling one.
-echo "--- building lambdapi from master ---"
-opam pin add lambdapi https://github.com/deducteam/lambdapi.git#master --yes
+#
+# lambdapi and Stdlib are pinned as a pair, the one tested together (STDLIB_REF
+# is below).  Following both masters broke job 171882: Stdlib 55d70f4 made its
+# Makefile call `lambdapi depend`, which this lambdapi does not have, and lambdapi
+# has since reworked `install`, which alethe-lp's Makefile calls.  Move them
+# together, and rerun the probe below when you do.
+LAMBDAPI_REF="${LAMBDAPI_REF:-62f3d952a79219cdaa3736c5d5b5d63e3d71286f}"
+echo "--- building lambdapi at $LAMBDAPI_REF ---"
+opam pin add lambdapi "https://github.com/deducteam/lambdapi.git#$LAMBDAPI_REF" --yes
 lambdapi --version || true
 
 # ---------------------------------------------------------------------------
 # 4. The Lambdapi libraries the translated proofs `require`, in order:
-#      Stdlib  <- Deducteam/lambdapi-stdlib, branch master (see below)
+#      Stdlib  <- Deducteam/lambdapi-stdlib, at STDLIB_REF (see below)
 #      alethe  <- carcara's own alethe-lp/   (alethe.core, alethe.prop, ...)
 # ---------------------------------------------------------------------------
 # alethe-lp requires Stdlib.HOL, Stdlib.Z, Stdlib.List, ... so Stdlib must be
@@ -394,20 +401,18 @@ lambdapi --version || true
 export GIT_SSH_COMMAND="${GIT_SSH_COMMAND:-ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -o ConnectTimeout=15}"
 export GIT_TERMINAL_PROMPT=0
 STDLIB_REPO="${STDLIB_REPO:-git@github.com:Deducteam/lambdapi-stdlib.git}"
-STDLIB_REF="${STDLIB_REF:-master}"
+STDLIB_REF="${STDLIB_REF:-63061d8ea69ee421d059b8f8ccee97d2ee2dd593}"
 STDLIB_HTTPS_FALLBACK="${STDLIB_HTTPS_FALLBACK:-https://github.com/Deducteam/lambdapi-stdlib}"
 STDLIB_SRC="$PREFIX/src/lambdapi-stdlib"
 if [ ! -d "$STDLIB_SRC" ]; then
   mkdir -p "$PREFIX/src"
-  if ! git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"; then
+  if ! git clone "$STDLIB_REPO" "$STDLIB_SRC"; then
     echo "--- $STDLIB_REPO unreachable (no ssh key on $(hostname)?), using https ---"
     rm -rf "$STDLIB_SRC"
     STDLIB_REPO="$STDLIB_HTTPS_FALLBACK"
-    git clone --branch "$STDLIB_REF" "$STDLIB_REPO" "$STDLIB_SRC"
+    git clone "$STDLIB_REPO" "$STDLIB_SRC"
   fi
 else
-  # A build clone, so take the remote's word for it: an earlier run may have
-  # left this on a different branch, and `pull --ff-only` cannot cross branches.
   git -C "$STDLIB_SRC" remote set-url origin "$STDLIB_REPO"
   if ! git -C "$STDLIB_SRC" fetch origin --prune; then
     echo "--- $STDLIB_REPO unreachable, refetching over https ---"
@@ -415,9 +420,13 @@ else
     git -C "$STDLIB_SRC" remote set-url origin "$STDLIB_REPO"
     git -C "$STDLIB_SRC" fetch origin --prune
   fi
-  git -C "$STDLIB_SRC" checkout -B "$STDLIB_REF" "origin/$STDLIB_REF"
-  git -C "$STDLIB_SRC" reset --hard "origin/$STDLIB_REF"
 fi
+# A build clone, so take the remote's word for it: an earlier run may have left
+# this anywhere.  STDLIB_REF is a commit or a branch; a branch means the remote's.
+if git -C "$STDLIB_SRC" rev-parse -q --verify "origin/$STDLIB_REF^{commit}" >/dev/null; then
+  STDLIB_REF="origin/$STDLIB_REF"
+fi
+git -C "$STDLIB_SRC" checkout --force --detach "$STDLIB_REF"
 echo "--- lambdapi-stdlib: $STDLIB_REPO $STDLIB_REF $(git -C "$STDLIB_SRC" rev-parse --short HEAD) ---"
 
 # .lpo files are compiled artifacts of whichever branch was checked out before,

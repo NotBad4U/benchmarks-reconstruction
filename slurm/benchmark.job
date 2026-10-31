@@ -118,8 +118,11 @@ export PYTHONUNBUFFERED=1
 # And doit's lines carry no clock.  So, every PROGRESS_EVERY seconds, one line
 # with a timestamp and the count of *finished* records per stage -- status/
 # holds one JSON per (stage, stem), written when the task ends -- plus how many
-# of them did not end in "done".  The stage order is the pipeline order, so
+# of them did not end in "success".  The stage order is the pipeline order, so
 # the column that is still growing is the stage the run is in.
+#
+# `|| true` because grep -L can exit 1 even when it lists files.  Under pipefail
+# that killed the job at the progress_line after doit, before results were copied.
 TOTAL=$(find "$BENCH_DIR" -name '*.smt2' | wc -l | tr -d ' ')
 progress_line() {
   line="=== $(date +%H:%M)"
@@ -128,9 +131,9 @@ progress_line() {
     d="$JOB_DIR/status/$stage"
     [ -d "$d" ] || continue
     n=$(find "$d" -name '*.json' | wc -l | tr -d ' ')
-    bad=$(grep -rL '"status": "done"' --include='*.json' "$d" | wc -l | tr -d ' ')
+    bad=$({ grep -rL '"status": "success"' --include='*.json' "$d" || true; } | wc -l | tr -d ' ')
     line="$line  $stage $n"
-    if [ "$bad" -gt 0 ]; then line="$line (${bad} not done)"; fi
+    if [ "$bad" -gt 0 ]; then line="$line (${bad} not success)"; fi
   done
   echo "$line"
 }

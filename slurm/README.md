@@ -54,8 +54,8 @@ It installs into `$HOME/bench-toolchain`:
 |---|---|---|
 | cvc5 1.4.0 | upstream static Linux binary | **not on conda-forge** (the package does not exist), and confirmed on the cluster: `module spider cvc5` finds nothing and it is not on `PATH`. The static build needs no compiler and no shared libraries. |
 | carcara | cloned at `lambdapi-refactor`, `cargo install --path` | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
-| OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` master | opam is not installed on the cluster, so the job fetches the opam binary itself |
-| lambdapi-stdlib | `make install` from `Deducteam/lambdapi-stdlib` (`master`, cloned over ssh with an https fallback) | provides `Stdlib`, which `alethe-lp` requires |
+| OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` at `LAMBDAPI_REF` | opam is not installed on the cluster, so the job fetches the opam binary itself |
+| lambdapi-stdlib | `make install` from `Deducteam/lambdapi-stdlib` (at `STDLIB_REF`, cloned over ssh with an https fallback) | provides `Stdlib`, which `alethe-lp` requires |
 | Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
 | hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
 | QF_UF + UF | `download_benchs.sh` | now the default set (it used to fetch all five) |
