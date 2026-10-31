@@ -11,7 +11,7 @@
 #
 # Run the proof-reconstruction pipeline and copy the results into $HOME.
 #
-#   sbatch slurm/benchmark.job              # QF_UF + UF (everything downloaded)
+#   sbatch slurm/benchmark.job              # QF_UF + UF
 #   sbatch slurm/benchmark.job QF_UF        # one logic only
 #   sbatch --export=ALL,SKIP_LARGE=1 slurm/benchmark.job   # small proofs only
 #
@@ -56,11 +56,11 @@ done
 # ---------------------------------------------------------------------------
 # Which benchmarks
 # ---------------------------------------------------------------------------
-# No argument -> everything under $BENCHS_ROOT, which setup.job populated with
-# QF_UF and UF.  An argument picks one subdirectory.
+# No argument -> QF_UF and UF, or the logics in BENCH_LOGICS.  An argument picks
+# one logic or a subdirectory of one, such as QF_UF/eq_diamond.
 SUBSET="${1:-}"
-BENCH_DIR="${BENCHS_ROOT}${SUBSET:+/$SUBSET}"
-[ -d "$BENCH_DIR" ] || { echo "ERROR: no such benchmark dir: $BENCH_DIR" >&2; exit 1; }
+LOGICS="${SUBSET%%/*}"
+LOGICS="${LOGICS:-${BENCH_LOGICS:-QF_UF UF}}"
 
 # ---------------------------------------------------------------------------
 # Work on node-local scratch, not in $HOME
@@ -81,6 +81,16 @@ mkdir -p "$JOB_DIR"
 # Deliberately no EXIT trap: if the pipeline dies, the scratch dir is the only
 # evidence. It is removed at the end of a successful run instead.
 trap 'echo "job failed -- scratch kept at $JOB_DIR" >&2' ERR
+
+# Unpack onto scratch too; only the archives stay in $HOME.  Extracting into
+# $HOME managed about 6 files/s, with tar at 0.1% CPU waiting on the file server.
+# A logic whose archive is missing is downloaded first.
+BENCHS_LOCAL="$JOB_DIR/benchs"
+# shellcheck disable=SC2086
+BENCHS_DIR="$BENCHS_LOCAL" ARCHIVES_DIR="${BENCH_ARCHIVES:-$HOME/bench-archives}" \
+  bash "$SLURM_SUBMIT_DIR/download_benchs.sh" $LOGICS
+BENCH_DIR="$BENCHS_LOCAL${SUBSET:+/$SUBSET}"
+[ -d "$BENCH_DIR" ] || { echo "ERROR: no such benchmark dir: $BENCH_DIR" >&2; exit 1; }
 
 echo "=== node       : $(hostname)"
 echo "=== cores      : ${SLURM_CPUS_PER_TASK:-1}"
@@ -177,7 +187,7 @@ slurm_job_id    : $SLURM_JOB_ID
 node            : $(hostname)
 partition       : ${SLURM_JOB_PARTITION:-?}
 cores           : ${SLURM_CPUS_PER_TASK:-?}
-benchmark_dir   : $BENCH_DIR
+benchmarks      : ${SUBSET:-$LOGICS}
 proof_granularity: $PROOF_GRANULARITY
 skip_large      : ${SKIP_LARGE:-0}
 started         : $(date -Iseconds)

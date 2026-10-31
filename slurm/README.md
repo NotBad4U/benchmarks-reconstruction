@@ -58,7 +58,7 @@ It installs into `$HOME/bench-toolchain`:
 | lambdapi-stdlib | `make install` from `Deducteam/lambdapi-stdlib` (at `STDLIB_REF`, cloned over ssh with an https fallback) | provides `Stdlib`, which `alethe-lp` requires |
 | Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
 | hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
-| QF_UF + UF | `download_benchs.sh` | now the default set (it used to fetch all five) |
+| QF_UF + UF | `download_benchs.sh`, archives only, in `$HOME/bench-archives` | now the default set (it used to fetch all five). `benchmark.job` unpacks them onto node-local scratch, because extracting into `$HOME` is very slow |
 
 ### What the host has to provide
 

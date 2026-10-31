@@ -4,10 +4,17 @@
 #   ./download_benchs.sh              # QF_UF and UF (the default set)
 #   ./download_benchs.sh LIA UF       # pick explicitly
 #   BENCHS_DIR=$HOME/benchs ./download_benchs.sh
+#
+# ARCHIVES_DIR keeps the archives there, so a later run unpacks without
+# downloading again.  FETCH_ONLY=1 stops after the download.
 set -eu
 
 BENCHS_DIR="${BENCHS_DIR:-benchs}"
 mkdir -p "$BENCHS_DIR"
+if [ -n "${ARCHIVES_DIR:-}" ]; then
+  mkdir -p "$ARCHIVES_DIR"
+  ARCHIVES_DIR=$(cd "$ARCHIVES_DIR" && pwd)   # the pushd would break a relative one
+fi
 pushd "$BENCHS_DIR" > /dev/null
 
 url_for() {
@@ -26,21 +33,33 @@ url_for() {
 TARGETS="${*:-QF_UF UF}"
 
 for name in $TARGETS; do
-  archive="${name}.tar.zst"
+  archive="${ARCHIVES_DIR:-.}/${name}.tar.zst"
 
   if [ -d "$name" ]; then
     echo "✓ $name already exists, skipping."
     continue
   fi
 
-  echo "→ Downloading $name ..."
-  if command -v curl >/dev/null 2>&1; then
-    curl -fL --retry 3 --retry-delay 2 -o "$archive" "$(url_for "$name")"
-  elif command -v wget >/dev/null 2>&1; then
-    wget -O "$archive" "$(url_for "$name")"
+  if [ -f "$archive" ]; then
+    echo "✓ $archive already downloaded."
   else
-    echo "Error: need curl or wget installed." >&2
-    exit 1
+    echo "→ Downloading $name ..."
+    # Through a temporary name: jobs can share ARCHIVES_DIR, and an interrupted
+    # download must not pass for a complete archive on the next run.
+    part="$archive.part.$$"
+    if command -v curl >/dev/null 2>&1; then
+      curl -fL --retry 3 --retry-delay 2 -o "$part" "$(url_for "$name")"
+    elif command -v wget >/dev/null 2>&1; then
+      wget -O "$part" "$(url_for "$name")"
+    else
+      echo "Error: need curl or wget installed." >&2
+      exit 1
+    fi
+    mv "$part" "$archive"
+  fi
+
+  if [ -n "${FETCH_ONLY:-}" ]; then
+    continue
   fi
 
   echo "→ Extracting $archive ..."
@@ -65,9 +84,16 @@ for name in $TARGETS; do
     exit 1
   fi
 
-  rm -f "$archive"
+  if [ -z "${ARCHIVES_DIR:-}" ]; then
+    rm -f "$archive"
+  fi
   echo "✓ Ready: $name"
 done
+
+if [ -n "${FETCH_ONLY:-}" ]; then
+  popd > /dev/null
+  exit 0
+fi
 
 # --- keep only benchmarks that can have a proof ------------------------------
 # Folded in from the old clean-benchs.sh, which needed ripgrep (absent on the
