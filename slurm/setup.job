@@ -175,9 +175,14 @@ fi
 
 # hyperfine times stage 3 -- the one stage whose numbers get reported.  Not on
 # the cluster, and cargo is already here, so build it alongside carcara.
-if [ ! -x "$PREFIX/bin/hyperfine" ]; then
-  echo "--- building hyperfine ---"
-  cargo install hyperfine --locked --root "$PREFIX" --jobs "$JOBS"
+#
+# Pinned: 2.0.0 removed --time-unit, so every check died on the usage error (exit
+# 2, in milliseconds, without running lambdapi), and it replaced the JSON fields
+# dodo.py and collects.py read (mean, times, exit_codes).
+HYPERFINE_VERSION="${HYPERFINE_VERSION:-1.20.0}"
+if ! "$PREFIX/bin/hyperfine" --version 2>/dev/null | grep -qF "hyperfine $HYPERFINE_VERSION"; then
+  echo "--- building hyperfine $HYPERFINE_VERSION ---"
+  cargo install hyperfine --version "$HYPERFINE_VERSION" --locked --force --root "$PREFIX" --jobs "$JOBS"
 fi
 "$PREFIX/bin/hyperfine" --version
 
