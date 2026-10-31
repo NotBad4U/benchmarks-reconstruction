@@ -106,10 +106,6 @@ rewrite() {
   list_files | xargs -0 -n 200 sed "${SED_INPLACE[@]}" "$1"
 }
 
-rewrite 's/\$/_/g'
-rewrite 's/(declare-fun[[:space:]]+)apply/\1_apply/g'   # `apply` is reserved
-rewrite 's/\|([-+*])i\|/|i\1|/g'
-rewrite 's/\|([-+*])r\|/|r\1|/g'
 rewrite 's/\|([-+*])f\|/|f\1|/g'
 
 popd > /dev/null

@@ -101,6 +101,10 @@ TRANSLATE_TARGET = os.environ.get("TRANSLATE_TARGET", "lambdapi")
 #   "trying to elaborate assume, but it is invalid!"  (src/elaborator/mod.rs:270)
 # That was 3,251 of 3,571 translations on full QF_UF.
 PARSE_FLAGS = ["--expand-let-bindings"]
+# --escape wraps SMT-LIB symbols Lambdapi cannot read as identifiers in `{|...|}`:
+# `$` in Isabelle/HOL exports, keywords such as `apply`, debug-flag lookalikes
+# such as `-i`.  This replaces rewriting them in the benchmarks themselves.
+TRANSLATE_FLAGS = ["--admit-unsupported", "--escape"]
 # dsl-rewrite makes cvc5 emit `rare_rewrite` steps, which carcara can only
 # check when given the RARE database via --rare-file.  Without that file every
 # elaboration fails with "the rule <name> wasn't found".
@@ -463,7 +467,7 @@ def task_elaborate():
 def do_translate_small(stem: str) -> bool:
     out = SMALL / f"{stem}.lp"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--admit-unsupported", *PARSE_FLAGS, TRANSLATE_TARGET,
+    cmd = ["carcara", "translate", *TRANSLATE_FLAGS, *PARSE_FLAGS, TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
@@ -481,7 +485,7 @@ def do_translate_large(stem: str) -> bool:
     # (and collects.py) separates the two.
     out = LARGE / f"{stem}.lp"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = ["carcara", "translate", "--admit-unsupported", *PARSE_FLAGS, TRANSLATE_TARGET,
+    cmd = ["carcara", "translate", *TRANSLATE_FLAGS, *PARSE_FLAGS, TRANSLATE_TARGET,
            str(ALETHE / f"{stem}.elab"), str(problem_for(stem))]
     ev, sg, start, wall = run_limited(cmd, TRANSLATE_TIMEOUT, stdout_path=out)
     dropped = discard_unless_ok(out, ev, sg)
