@@ -194,7 +194,7 @@ check_timeout   : ${LAMBDAPI_CHECK_TIMEOUT:-60}s per hyperfine invocation
 hyperfine_runs  : small 3 warmup + ${MAX_RUN_HYPERFINE_SMALL:-10}, large 0 + ${MAX_RUN_HYPERFINE_LARGE:-1}
 started         : $(date -Iseconds)
 cvc5            : $(cvc5 --version | head -1)
-carcara         : $(carcara --version) $(cat "$PREFIX/carcara.commit" 2>/dev/null)
+carcara         : $(carcara --version)
 lambdapi        : $(lambdapi --version 2>&1 | head -1)
 hyperfine       : $(hyperfine --version)
 EOF

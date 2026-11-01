@@ -53,7 +53,7 @@ It installs into `$HOME/bench-toolchain`:
 | component | how | why |
 |---|---|---|
 | cvc5 1.4.0 | upstream static Linux binary | **not on conda-forge** (the package does not exist), and confirmed on the cluster: `module spider cvc5` finds nothing and it is not on `PATH`. The static build needs no compiler and no shared libraries. |
-| carcara | cloned at `lambdapi-refactor`, `cargo install --path`; rebuilt whenever the pull moves the checkout (the built commit is kept in `$PREFIX/carcara.commit`) | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
+| carcara | cloned at `lambdapi-refactor`, `cargo install --path`; rebuilt whenever `carcara --version` no longer names the pulled commit | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
 | OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` at `LAMBDAPI_REF` | opam is not installed on the cluster, so the job fetches the opam binary itself |
 | lambdapi-stdlib | `make install` from `Deducteam/lambdapi-stdlib` (at `STDLIB_REF`, cloned over ssh with an https fallback) | provides `Stdlib`, which `alethe-lp` requires |
 | Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
@@ -66,8 +66,9 @@ binary if the commit changed, reinstalls `alethe-lp/`, and ends by pushing a
 four-assertion QF_UF problem through `cvc5 → carcara elaborate → carcara
 translate → lambdapi check` with the same flags `dodo.py` uses. So
 `bench-setup-<jobid>.out` is where to confirm the translator is the one you
-pushed and that it still produces proofs lambdapi accepts: look for
-`carcara commit: <hash> <subject>` and `--- pipeline probe checks ---`, with
+pushed and that it still produces proofs lambdapi accepts: look for the
+commit in `carcara 1.1.0 [git <hash> lambdapi-refactor]` (also recorded in
+every run's `run-info.txt`) and for `--- pipeline probe checks ---`, with
 the rule mix and the number of admitted steps underneath. A probe failure
 stops the job with a non-zero exit, so a failed setup job means do not start
 a benchmark job.
@@ -134,13 +135,17 @@ would sit pending forever waiting for a node that can satisfy it.
 That is 100 benchmarks. If it produces `~/benchmark-results/<jobid>/summary.txt`,
 the pipeline works.
 
+With the defaults the whole family passes (job 172414, carcara 9354301:
+100/100 checks, at most 6.9 s per check) in under half an hour.
+
 `LAMBDAPI_CHECK_TIMEOUT` (default 60 s) limits one *hyperfine invocation*,
 not one `lambdapi check`: a small proof is checked 3 warmup +
 `MAX_RUN_HYPERFINE_SMALL` (default 10) times inside that budget, a large one
 once. So with the defaults a small proof whose check takes more than ~4.6 s
-is recorded as a timeout. The biggest diamonds take about two minutes per
-check, so to see the whole family pass give the stage room and take fewer
-timed runs:
+is recorded as a timeout, and the same proof produced by a different cvc5
+can be several times bigger (the local cvc5 1.3.4 makes diamonds that take
+up to two minutes per check). To give the stage room, raise the budget and
+take fewer timed runs:
 
 ```bash
 LAMBDAPI_CHECK_TIMEOUT=600 MAX_RUN_HYPERFINE_SMALL=3 \
@@ -149,8 +154,8 @@ LAMBDAPI_CHECK_TIMEOUT=600 MAX_RUN_HYPERFINE_SMALL=3 \
 
 (`VAR=… sbatch` reaches the job because sbatch exports the submitting
 environment by default; `--export=ALL,VAR=…` is the same thing.) The checks
-are serialised to keep the timings clean, so this is about one to two hours
-of wall time; both settings are recorded in `run-info.txt`.
+are serialised to keep the timings clean, so budget wall time accordingly;
+both settings are recorded in `run-info.txt`.
 
 ## 3. The real run
 
