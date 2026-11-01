@@ -167,11 +167,18 @@ if ! ensure_tool m4 M4 m4; then
 fi
 m4 --version | head -1
 
-if [ ! -x "$PREFIX/bin/carcara" ]; then
-  echo "--- building carcara ---"
+# `carcara --version` says 1.1.0 on every commit of lambdapi-refactor, so it
+# cannot tell a stale binary from a fresh one.  Remember the commit the binary
+# was built from and rebuild whenever the pull above moved the checkout.
+CARCARA_COMMIT="$(git -C "$CARCARA_SRC" rev-parse HEAD)"
+if [ ! -x "$PREFIX/bin/carcara" ] \
+   || [ "$(cat "$PREFIX/carcara.commit" 2>/dev/null)" != "$CARCARA_COMMIT" ]; then
+  echo "--- building carcara at $CARCARA_COMMIT ---"
   cargo install --path "$CARCARA_SRC" --root "$PREFIX" --jobs "$JOBS" --force
+  echo "$CARCARA_COMMIT" > "$PREFIX/carcara.commit"
 fi
 "$PREFIX/bin/carcara" --version
+echo "carcara commit: $(git -C "$CARCARA_SRC" log -1 --format='%h %s')"
 
 # hyperfine times stage 3 -- the one stage whose numbers get reported.  Not on
 # the cluster, and cargo is already here, so build it alongside carcara.
@@ -459,6 +466,59 @@ fi
 rm -rf "$PROBE"
 echo "--- alethe.core resolves ---"
 
+# Then run the pipeline itself: a four-assertion QF_UF problem through cvc5,
+# carcara elaborate, carcara translate and lambdapi check, with the flags
+# dodo.py passes at each stage.  A carcara that builds but mistranslates, or
+# a library that no longer matches the translator, fails here instead of in
+# stage 3 of a benchmark job.  The problem needs `cong`, `trans` and
+# `resolution`, the rules every QF_UF proof is made of.
+PROBE="$(mktemp -d)"
+printf 'package_name = probe\nroot_path = probe\n' > "$PROBE/lambdapi.pkg"
+cat > "$PROBE/probe.smt2" <<'EOF'
+(set-logic QF_UF)
+(declare-sort U 0)
+(declare-fun a () U)
+(declare-fun b () U)
+(declare-fun c () U)
+(declare-fun f (U U) U)
+(declare-fun p (U) Bool)
+(assert (= a b))
+(assert (= b c))
+(assert (or (p (f a a)) (p (f b b))))
+(assert (not (p (f c c))))
+(check-sat)
+EOF
+# carcara prefixes the elaborated proof with a status word (`valid`, `holey`)
+# that translate cannot parse; drop it as dodo.py's split_status_line does.
+strip_status_line() {
+  local first
+  read -r first < "$1"
+  case "$first" in
+    '('*) ;;
+    *) tail -n +2 "$1" > "$1.tmp" && mv "$1.tmp" "$1" ;;
+  esac
+}
+if ! (
+  cd "$PROBE" \
+  && cvc5 --produce-proofs --dump-proofs --proof-format-mode=alethe \
+       --proof-granularity="${PROOF_GRANULARITY:-theory-rewrite}" \
+       --proof-alethe-res-pivots --proof-elim-subtypes --print-arith-lit-token \
+       probe.smt2 > probe.proof \
+  && carcara elaborate --no-print-with-sharing --expand-let-bindings -i --log off \
+       probe.proof probe.smt2 > probe.elab \
+  && strip_status_line probe.elab \
+  && carcara translate --admit-unsupported --escape --expand-let-bindings lambdapi \
+       probe.elab probe.smt2 > probe.lp \
+  && lambdapi check -w -v 0 probe.lp
+); then
+  echo "ERROR: the cvc5 -> carcara -> lambdapi probe failed, see above" >&2
+  exit 1
+fi
+echo "--- pipeline probe checks ---"
+echo "    rules: $(grep -o ':rule [a-z_]*' "$PROBE/probe.elab" | sort | uniq -c | tr -s ' \n' ' ')"
+echo "    $(grep -c '^symbol p_' "$PROBE/probe.lp") shared terms, $(grep -c 'admit;' "$PROBE/probe.lp") admitted step(s)"
+rm -rf "$PROBE"
+
 # ---------------------------------------------------------------------------
 # 5. Benchmarks (QF_UF and UF by default)
 # ---------------------------------------------------------------------------
@@ -504,3 +564,4 @@ echo "archives  : $BENCH_ARCHIVES"
 for b in cvc5 carcara lambdapi hyperfine; do
   printf "  %-10s %s\n" "$b" "$(command -v $b || echo MISSING)"
 done
+echo "  carcara    commit $(cat "$PREFIX/carcara.commit")"

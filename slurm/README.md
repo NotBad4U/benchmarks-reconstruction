@@ -53,12 +53,24 @@ It installs into `$HOME/bench-toolchain`:
 | component | how | why |
 |---|---|---|
 | cvc5 1.4.0 | upstream static Linux binary | **not on conda-forge** (the package does not exist), and confirmed on the cluster: `module spider cvc5` finds nothing and it is not on `PATH`. The static build needs no compiler and no shared libraries. |
-| carcara | cloned at `lambdapi-refactor`, `cargo install --path` | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
+| carcara | cloned at `lambdapi-refactor`, `cargo install --path`; rebuilt whenever the pull moves the checkout (the built commit is kept in `$PREFIX/carcara.commit`) | needs a private rustup: `Cargo.toml` declares `edition 2024` / `rust-version 1.93`, newer than most site Rust modules |
 | OCaml 5.2 + lambdapi | private opam switch, `opam pin` on `deducteam/lambdapi` at `LAMBDAPI_REF` | opam is not installed on the cluster, so the job fetches the opam binary itself |
 | lambdapi-stdlib | `make install` from `Deducteam/lambdapi-stdlib` (at `STDLIB_REF`, cloned over ssh with an https fallback) | provides `Stdlib`, which `alethe-lp` requires |
 | Alethe library | `make install` in carcara's `alethe-lp/` | provides `alethe.core` etc. — without it every `lambdapi check` fails. The job then checks that `alethe.core` resolves and stops if not |
 | hyperfine | `cargo install hyperfine` | times stage 3; not on the cluster, and cargo is already there for carcara |
 | QF_UF + UF | `download_benchs.sh`, archives only, in `$HOME/bench-archives` | now the default set (it used to fetch all five). `benchmark.job` unpacks them onto node-local scratch, because extracting into `$HOME` is very slow |
+
+The job is also how a new carcara gets onto the cluster: push to
+`lambdapi-refactor`, `sbatch slurm/setup.job` again. It pulls, rebuilds the
+binary if the commit changed, reinstalls `alethe-lp/`, and ends by pushing a
+four-assertion QF_UF problem through `cvc5 → carcara elaborate → carcara
+translate → lambdapi check` with the same flags `dodo.py` uses. So
+`bench-setup-<jobid>.out` is where to confirm the translator is the one you
+pushed and that it still produces proofs lambdapi accepts: look for
+`carcara commit: <hash> <subject>` and `--- pipeline probe checks ---`, with
+the rule mix and the number of admitted steps underneath. A probe failure
+stops the job with a non-zero exit, so a failed setup job means do not start
+a benchmark job.
 
 ### What the host has to provide
 
@@ -119,8 +131,26 @@ sbatch --time=00:30:00 --cpus-per-task=8 --mem=16G --partition=scavenge slurm/be
 smallest `scavenge` nodes have only ~30 GB, so without the override the job
 would sit pending forever waiting for a node that can satisfy it.
 
-That is 100 benchmarks and takes about a minute of compute once it starts. If
-it produces `~/benchmark-results/<jobid>/summary.txt`, the pipeline works.
+That is 100 benchmarks. If it produces `~/benchmark-results/<jobid>/summary.txt`,
+the pipeline works.
+
+`LAMBDAPI_CHECK_TIMEOUT` (default 60 s) limits one *hyperfine invocation*,
+not one `lambdapi check`: a small proof is checked 3 warmup +
+`MAX_RUN_HYPERFINE_SMALL` (default 10) times inside that budget, a large one
+once. So with the defaults a small proof whose check takes more than ~4.6 s
+is recorded as a timeout. The biggest diamonds take about two minutes per
+check, so to see the whole family pass give the stage room and take fewer
+timed runs:
+
+```bash
+LAMBDAPI_CHECK_TIMEOUT=600 MAX_RUN_HYPERFINE_SMALL=3 \
+  sbatch --time=03:00:00 --cpus-per-task=8 --mem=16G --partition=scavenge slurm/benchmark.job QF_UF/eq_diamond
+```
+
+(`VAR=… sbatch` reaches the job because sbatch exports the submitting
+environment by default; `--export=ALL,VAR=…` is the same thing.) The checks
+are serialised to keep the timings clean, so this is about one to two hours
+of wall time; both settings are recorded in `run-info.txt`.
 
 ## 3. The real run
 
