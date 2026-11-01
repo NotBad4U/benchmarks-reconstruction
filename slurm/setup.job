@@ -515,7 +515,9 @@ if ! (
 fi
 echo "--- pipeline probe checks ---"
 echo "    rules: $(grep -o ':rule [a-z_]*' "$PROBE/probe.elab" | sort | uniq -c | tr -s ' \n' ' ')"
-echo "    $(grep -c '^symbol p_' "$PROBE/probe.lp") shared terms, $(grep -c 'admit;' "$PROBE/probe.lp") admitted step(s)"
+# `eval #hole` is a step cvc5 itself left unproved; `admit` a rule the
+# translator does not handle (alethe-lp/README.md, "Known debt").
+echo "    $(grep -c '^symbol p_' "$PROBE/probe.lp") shared terms, $(grep -c 'eval #hole' "$PROBE/probe.lp") solver hole(s), $(grep -c 'admit;' "$PROBE/probe.lp") admitted step(s)"
 rm -rf "$PROBE"
 
 # ---------------------------------------------------------------------------
